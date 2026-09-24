@@ -191,6 +191,7 @@ body{-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none}
   <input type="password" id="lgPass" autocomplete="current-password" placeholder="Password" style="background:var(--slab2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;font-size:15px">
   <button class="btn" id="lgIn">Sign in</button>
   <button class="btn ghost" id="lgUp">Create my account (first time only)</button>
+  <button class="btn ghost" id="lgForgot" style="background:none;color:var(--dim);font-weight:500">Forgot password?</button>
 </div></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
@@ -875,12 +876,26 @@ async function afterLogin(user){
 (async()=>{
   if(!window.supabase||SB_URL.startsWith("__")){setSync("Offline mode · saved on this device");return}
   sb=window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
+  const recovering=/type=recovery/.test(location.hash);
+  const L=document.getElementById("login"),msg=document.getElementById("loginMsg");
   const {data:{session}}=await sb.auth.getSession();
+  if(recovering&&session){
+    L.hidden=false;["lgEmail","lgUp","lgForgot"].forEach(id=>document.getElementById(id).hidden=true);
+    msg.textContent="Type your new password, then tap Save.";const pw=document.getElementById("lgPass");pw.placeholder="New password";pw.autocomplete="new-password";
+    const b=document.getElementById("lgIn");b.textContent="Save new password";
+    b.onclick=async()=>{if(pw.value.length<6){msg.textContent="Use at least 6 characters.";return}msg.textContent="Saving…";
+      const {data,error}=await sb.auth.updateUser({password:pw.value});if(error){msg.textContent="Couldn't save: "+error.message;return}
+      history.replaceState(null,"",location.pathname);afterLogin(data.user)};
+    return;
+  }
   if(session) return afterLogin(session.user);
-  const L=document.getElementById("login"),msg=document.getElementById("loginMsg");L.hidden=false;
+  L.hidden=false;
   const creds=()=>({email:document.getElementById("lgEmail").value.trim(),password:document.getElementById("lgPass").value});
   document.getElementById("lgIn").onclick=async()=>{msg.textContent="Signing in…";const {data,error}=await sb.auth.signInWithPassword(creds());
     if(error){msg.textContent=error.message==="Email not confirmed"?"Check your email and tap the confirm link, then sign in here.":"Couldn't sign in: "+error.message;return}afterLogin(data.user)};
+  document.getElementById("lgForgot").onclick=async()=>{const email=document.getElementById("lgEmail").value.trim();if(!email){msg.textContent="Type your email above first, then tap Forgot password.";return}
+    msg.textContent="Sending…";const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+    msg.textContent=error?"Couldn't send: "+error.message:"Check your email and tap the reset link. It opens Cole so you can set a new password.";};
   document.getElementById("lgUp").onclick=async()=>{const c=creds();if(c.password.length<6){msg.textContent="Use a password with at least 6 characters.";return}
     msg.textContent="Creating your account…";const {data,error}=await sb.auth.signUp(c);
     if(error){msg.textContent="Couldn't create it: "+error.message;return}
