@@ -1,0 +1,1631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spikey</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--txt);font-family:var(--f-body)}
+  #bgfx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+  .lbl{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;color:var(--mute)}
+  .num{font-family:var(--f-display)}
+
+  /* ===== frame ===== */
+  .screen{position:relative;z-index:1;height:100%;display:grid;gap:14px;padding:16px 18px}
+  body[data-screen="main"] .screen{grid-template-columns:minmax(250px,22%) 1fr minmax(270px,25%);grid-template-rows:auto minmax(0,1fr) auto auto;
+    grid-template-areas:"top top top" "left core right" "left talk right" "tape tape tape"}
+  body[data-screen="side"] .screen{grid-template-columns:1fr 25%;grid-template-rows:auto 1fr auto;
+    grid-template-areas:"top top" "chart rail" "tape rail"}
+  body[data-screen="main"] .side-only, body[data-screen="side"] .main-only{display:none !important}
+
+  .panel{position:relative;background:var(--panel);border:1px solid var(--line);padding:14px 16px;min-height:0;overflow:hidden}
+  .panel > h3{display:flex;justify-content:space-between;align-items:center;font:500 10.5px var(--f-mono);letter-spacing:.28em;text-transform:uppercase;color:var(--a);margin-bottom:10px}
+  .panel > h3 em{font-style:normal;color:var(--mute)}
+  .col{display:flex;flex-direction:column;gap:14px;min-height:0}
+  .grow{flex:1}
+
+  /* top bar */
+  .top{grid-area:top;display:flex;align-items:center;gap:22px;padding:10px 18px}
+  .mark{font:700 20px var(--f-display);letter-spacing:.42em;color:var(--txt);white-space:nowrap}
+  .mark b{color:var(--a)}
+  .top .sep{flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+  .chip{display:flex;align-items:center;gap:8px;font:500 11px var(--f-mono);letter-spacing:.2em;color:var(--mute);white-space:nowrap}
+  .chip b{color:var(--txt);font-weight:500}
+  #stateLabel{font:600 11px var(--f-mono);letter-spacing:.3em;color:var(--a);padding:6px 12px;border:1px solid var(--line);white-space:nowrap}
+  body[data-mode="listening"] #stateLabel{color:var(--bg);background:var(--a);border-color:var(--a)}
+  body[data-speaking="1"] #stateLabel{color:var(--bg);background:var(--a2);border-color:var(--a2)}
+  body[data-market="open"] #futures{color:var(--good)}
+
+  /* time block */
+  .clock{font:300 clamp(54px,5.2vw,96px) var(--f-display);line-height:.9;letter-spacing:-.02em;color:var(--hi)}
+  .clock small{font-size:.26em;letter-spacing:.1em;color:var(--a);margin-left:.35em;vertical-align:.95em}
+  .clock sup{font:400 .2em var(--f-mono);color:var(--mute);vertical-align:1.7em}
+  .date{margin-top:8px;font:500 14px var(--f-mono);letter-spacing:.2em;text-transform:uppercase;color:var(--a2)}
+
+  /* kv grid */
+  .kv{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+  .kv div{display:flex;flex-direction:column;gap:3px}
+  .kv b{font:500 16px var(--f-mono);color:var(--hi)}
+  .bar{height:3px;background:var(--line);margin-top:10px}
+  .bar i{display:block;height:100%;background:var(--a);box-shadow:0 0 10px var(--a);transition:width .6s}
+  body[data-lowbatt="1"] .bar i{background:var(--alert);box-shadow:0 0 10px var(--alert)}
+  #micSpark{width:100%;height:34px;margin-top:10px;display:block}
+
+  /* weather */
+  .wx{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
+  .temp{font:300 58px var(--f-display);line-height:.9;color:var(--hi)}
+  .cond{font:500 13px var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--a2);text-align:right}
+  #hourly{display:flex;gap:4px;height:88px;margin-top:12px;align-items:stretch}
+  .hr{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;font-family:var(--f-mono)}
+  .hr i{width:100%;max-width:14px;background:linear-gradient(to top,transparent,var(--a));opacity:.8}
+  .hr:first-child i{background:linear-gradient(to top,transparent,var(--a2))}
+  .ht{font-size:10px;color:var(--hi)}.hl{font-size:9px;color:var(--mute)}.hp{font-size:8.5px;color:var(--a2);opacity:.8}
+
+  /* sessions */
+  .sess{margin-bottom:9px}
+  .sn{display:flex;justify-content:space-between;font:500 11.5px var(--f-mono);letter-spacing:.06em;color:var(--mute)}
+  .sn span:first-child{color:var(--txt);letter-spacing:.14em;text-transform:uppercase}
+  .sess.live .sn span:last-child{color:var(--good)}
+  .sb{height:3px;background:var(--line);margin-top:5px}
+  .sb i{display:block;height:100%;background:var(--good);box-shadow:0 0 8px var(--good)}
+
+  /* lists */
+  ol#tasks,ul#comms{list-style:none;overflow:auto;max-height:100%}
+  ol#tasks li{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:15px}
+  ol#tasks li b{font:500 11px var(--f-mono);color:var(--a);padding-top:3px}
+  ul#comms li{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .ct{grid-row:span 2;font:500 10px var(--f-mono);color:var(--mute);padding-top:2px}
+  .cq{font:500 12px var(--f-mono);color:var(--a2)}
+  .cq::before{content:"› "}
+  .ca{font-size:13.5px;color:var(--txt);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  li.empty{color:var(--mute);font-size:14px;border:0 !important;display:block !important}
+
+  /* core */
+  .core{grid-area:core;position:relative;min-height:0}
+  #orb{position:absolute;inset:0;cursor:pointer}
+  #orb canvas{width:100%;height:100%;display:block}
+  .talk{grid-area:talk;text-align:center;padding:0 2vw 6px}
+  #transcript{font:400 14px var(--f-mono);color:var(--mute);min-height:1.4em}
+  #transcript[data-live="1"]{color:var(--a2)}
+  #transcript:not(:empty)::before{content:"› "}
+  #reply{margin-top:6px;font:300 clamp(20px,1.6vw,28px) var(--f-body);line-height:1.3;min-height:2.6em;color:var(--hi)}
+
+  /* tape + command */
+  .tape{grid-area:tape;display:flex;align-items:center;gap:14px;padding:0 14px;height:52px}
+  .tape .tv{flex:1;min-width:0;height:44px;overflow:hidden}
+  .cmdrow{display:flex;align-items:center;gap:12px;width:34%;min-width:320px;border-left:1px solid var(--line);padding-left:14px}
+  body[data-screen="side"] .cmdrow{display:none}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--mute);flex:none}
+  .dot.on{background:var(--good);box-shadow:0 0 10px var(--good)}.dot.off{background:var(--alert);box-shadow:0 0 10px var(--alert)}
+  #micLabel{font:500 10px var(--f-mono);letter-spacing:.2em;color:var(--mute);white-space:nowrap}
+  #cmd{flex:1;min-width:0;background:transparent;border:0;color:var(--hi);font:400 14px var(--f-mono);outline:none}
+  #cmd::placeholder{color:var(--mute);opacity:.6}
+
+  /* side screen */
+  .chart{grid-area:chart;padding:0;display:flex;flex-direction:column}
+  .chart > h3{padding:12px 16px 0}
+  #chartBox{flex:1;min-height:0}
+  .rail{grid-area:rail}
+  #spotify{width:100%;height:352px;border:0;border-radius:12px;display:block}
+  #mini{height:170px}
+  .tiny{height:clamp(104px,17vh,190px)}
+  .tick h3 .chipbtn{margin-left:auto}
+  /* weekly P&L */
+  .pnlTop{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  #pnlTotal{font:500 clamp(28px,2.5vw,42px) var(--f-display);letter-spacing:-.03em;color:var(--hi)}
+  #pnlTotal.up{color:var(--good);text-shadow:0 0 18px rgba(61,255,143,.25)} #pnlTotal.down{color:var(--red);text-shadow:0 0 18px rgba(255,34,51,.3)}
+  #pnlSub{font:400 11px var(--f-mono);color:var(--mute);letter-spacing:.06em;text-align:right;line-height:1.5}
+  #pnlBars{display:flex;gap:6px;height:clamp(54px,8vh,78px);margin-top:10px}
+  .pb{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-family:var(--f-mono)}
+  .pb .col{flex:1;width:100%;position:relative;border-bottom:1px solid transparent}
+  .pb .col::after{content:"";position:absolute;left:0;right:0;top:50%;height:1px;background:var(--line)}
+  .pb .col i{position:absolute;left:18%;right:18%}
+  .pb .col i.up{bottom:50%;background:linear-gradient(to top,rgba(61,255,143,.35),var(--good))}
+  .pb .col i.down{top:50%;background:linear-gradient(to bottom,rgba(255,34,51,.35),var(--red))}
+  .pb .col i.flat{top:calc(50% - 1px);height:2px !important;background:var(--mute);opacity:.5}
+  .pb.today small{color:var(--hi)} .pb small{font-size:9.5px;color:var(--mute);letter-spacing:.1em}
+  .pb span{font-size:9.5px;color:var(--txt);white-space:nowrap}
+  .pb.clean small::after{content:" ✓";color:var(--good)} .pb.broken small::after{content:" ✕";color:var(--red)}
+  #pnlToday{display:flex;justify-content:space-between;font:400 11.5px var(--f-mono);color:var(--mute);margin-top:9px;letter-spacing:.04em}
+  #pnlToday b{color:var(--hi);font-weight:500}
+  #coleState{cursor:pointer} #coleState.on{color:var(--good)}
+  #coleLogin{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:25;width:min(380px,90vw);display:none}
+  #coleLogin.show{display:block}
+  #coleLogin input{width:100%;margin-top:10px;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--hi);font:400 14px var(--f-mono);padding:10px 12px;outline:none}
+  #coleLogin input:focus{border-color:var(--a)}
+  #coleLogin .btns{display:flex;gap:10px;margin-top:14px}
+  #coleLogin button{flex:1;padding:10px;font:600 11px var(--f-mono);letter-spacing:.2em;border:1px solid var(--line);background:transparent;color:var(--txt);cursor:pointer}
+  #coleLogin button.go{background:var(--a);border-color:var(--a);color:#fff}
+  #coleMsg{font:400 12px var(--f-mono);color:var(--mute);margin-top:10px;min-height:1.2em}
+  #spotifyMain{width:100%;height:152px;border:0;border-radius:12px;display:block}
+  .chipbtn{cursor:pointer}
+  #bigChartWrap{background:var(--bg) !important;backdrop-filter:none;position:fixed;inset:74px 18px 80px calc(18px + 22% + 14px);z-index:15;display:none;flex-direction:column}
+  #bigChartWrap.show{display:flex}
+  #bigChartWrap h3 button{background:transparent;border:1px solid var(--line);color:var(--txt);font:500 10px var(--f-mono);letter-spacing:.2em;padding:4px 10px;cursor:pointer}
+  #bigChart{flex:1;min-height:0}
+  /* laptop screens: tighten everything */
+  @media (max-height:900px){
+    .screen{gap:10px;padding:10px 12px}
+    .panel{padding:10px 12px}
+    .panel > h3{margin-bottom:7px}
+    .clock{font-size:clamp(44px,4.4vw,72px)}
+    .date{font-size:12px;margin-top:5px}
+    .temp{font-size:44px}
+    #hourly{height:62px;margin-top:8px}
+    .hp{display:none}
+    .sess{margin-bottom:6px}
+    #reply{font-size:clamp(17px,1.5vw,23px);min-height:2.4em}
+    .top{padding:7px 14px}.mark{font-size:16px}
+    .tape{height:44px;padding-top:0;padding-bottom:0}.tape .tv{height:40px}
+    ol#tasks li{padding:5px 0;font-size:14px}
+    #bigChartWrap{inset:58px 12px 64px calc(12px + 22% + 10px)}
+  }
+  @media (max-height:760px){ #spotifyMain{height:80px} .tiny{height:96px} }
+
+  /* holo */
+  #holo{position:fixed;left:50%;top:44%;width:min(560px,80vw);z-index:20;padding:24px 28px;background:var(--holo);border:1px solid var(--a);
+    backdrop-filter:blur(10px);box-shadow:0 0 60px var(--glow);transform:translate(-50%,-50%) scale(.7);opacity:0;pointer-events:none;transition:.45s cubic-bezier(.2,.9,.2,1)}
+  #holo.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+  #holoTitle{font:600 12px var(--f-mono);letter-spacing:.36em;color:var(--a);margin-bottom:14px}
+  .hrow{display:flex;justify-content:space-between;gap:20px;padding:9px 0;border-bottom:1px solid var(--line);font-size:17px}
+  .hrow span:last-child{font:500 14px var(--f-mono);color:var(--a2)}
+  .hbig{font:300 70px var(--f-display);line-height:1;margin-bottom:8px;color:var(--hi)}
+  #activate{position:fixed;inset:0;z-index:30;display:none;place-items:center;background:rgba(0,0,0,.75);cursor:pointer;font:600 16px var(--f-mono);letter-spacing:.5em;color:var(--a)}
+  #activate.show{display:grid}
+
+  /* ===== theme ===== */
+  body[data-theme="nightops"]{
+    --bg:#060608; --panel:rgba(18,16,24,.72); --line:rgba(170,120,255,.18);
+    --a:#b57bff; --a2:#3dff8f; --alert:#ff2d55; --good:#3dff8f; --txt:#e6e1f0; --hi:#ffffff; --mute:#7a738c;
+    --holo:rgba(14,10,22,.9); --glow:rgba(181,123,255,.35); --chartbg:rgba(6,6,8,1);
+    --f-display:'Space Grotesk',sans-serif; --f-body:'Space Grotesk',sans-serif; --f-mono:'JetBrains Mono',monospace;
+    background:#060608;
+  }
+  body[data-theme="nightops"] .panel{border-radius:10px;backdrop-filter:blur(10px)}
+  body[data-theme="nightops"] .panel > h3{color:var(--a2)}
+  body[data-theme="nightops"] .clock,body[data-theme="nightops"] .temp{font-weight:500;letter-spacing:-.05em;color:#fff}
+  body[data-theme="nightops"] .clock small{color:var(--a)}
+  body[data-theme="nightops"] .mark{font-weight:700;letter-spacing:.25em}
+  body[data-theme="nightops"] .mark b{color:var(--a2)}
+  body[data-theme="nightops"] .screen::after{content:"";position:fixed;inset:-50%;pointer-events:none;opacity:.08;z-index:40;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");animation:gr .6s steps(3) infinite}
+  @keyframes gr{33%{transform:translate(-2%,1%)}66%{transform:translate(1%,-2%)}}
+  body[data-theme="nightops"]{--r-top:181,123,255;--r-bot:121,223,255;--r-speak:61,255,143;--r-listen:200,255,225;--r-arc:61,255,143;--r-glow1:120,60,220;--r-glow2:40,255,140;--r-ring:181,123,255}
+
+  body[data-theme="nightops"]{--red:#ff2233; --a:#ff2233; --a2:#b57bff; --line:rgba(255,34,51,.22); --panel:rgba(24,10,14,.72); --mute:#8c7378;
+    --r-top:255,34,51;--r-bot:181,123,255;--r-speak:255,255,255;--r-listen:181,123,255;--r-arc:255,34,51;--r-glow1:200,20,40;--r-glow2:120,50,210;--r-ring:255,34,51;
+    --glow:rgba(255,34,51,.35)}
+  body[data-theme="nightops"] .panel > h3{color:var(--red)}
+  body[data-theme="nightops"] .mark b{color:var(--red)}
+  body[data-theme="nightops"] .clock small{color:var(--red)}
+  body[data-theme="nightops"] .date{color:var(--a2)}
+  body[data-theme="nightops"] .cond{color:var(--a2)}
+  body[data-theme="nightops"] .panel{border-color:rgba(255,34,51,.22)}
+  body[data-theme="nightops"] .panel::before{content:"";position:absolute;left:0;top:0;width:36px;height:2px;background:var(--red);box-shadow:0 0 10px var(--red)}
+  body[data-theme="nightops"][data-speaking="1"] #stateLabel{background:var(--red);border-color:var(--red);color:#fff}
+  body[data-theme="nightops"][data-mode="listening"] #stateLabel{background:var(--a2);border-color:var(--a2);color:#000}
+  body[data-theme="nightops"] .cq{color:var(--a2)}
+
+</style>
+</head>
+<body data-mode="idle" data-theme="nightops">
+<canvas id="bgfx"></canvas>
+<div class="screen">
+  <header class="panel top">
+    <div class="mark">SPIKEY <b>×</b> SLEDGE B</div>
+    <span class="sep"></span>
+    <span class="chip side-only">MARKETS LINK</span>
+    <span class="chip"><span id="futures">—</span></span>
+    <span class="chip main-only">PWR <b id="batt">—</b></span>
+    <span class="chip" style="display:none">MIAMI <b id="temp2">--°</b></span>
+    <span class="chip"><b id="clock2">--:--</b></span>
+    <span id="stateLabel">INITIALIZING</span>
+  </header>
+
+  <!-- MAIN SCREEN -->
+  <aside class="col main-only" style="grid-area:left">
+    <section class="panel tick">
+      <h3><span>NQ · Nasdaq-100</span><em class="chipbtn" data-big="NQ">EXPAND ⤢</em></h3>
+      <div class="tiny" id="tinyNQ"></div>
+    </section>
+    <section class="panel tick">
+      <h3><span>GC · Gold</span><em class="chipbtn" data-big="GC">EXPAND ⤢</em></h3>
+      <div class="tiny" id="tinyGC"></div>
+    </section>
+    <section class="panel grow">
+      <h3>Market sessions <em>ET</em></h3>
+      <div id="sessions"></div>
+      <span id="clock" style="display:none"></span><span id="ampm" style="display:none"></span>
+      <i id="battBar" style="display:none"></i><span id="battState" style="display:none"></span><span id="net" style="display:none"></span>
+    </section>
+  </aside>
+
+  <div class="core main-only"><div id="orb" title="Click or press Space to talk"><canvas id="fx"></canvas></div></div>
+  <div class="talk main-only"><div id="transcript"></div><div id="reply"></div></div>
+
+  <aside class="col main-only" style="grid-area:right">
+    <section class="panel">
+      <h3>Soundtrack</h3>
+      <iframe id="spotifyMain" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>
+    </section>
+    <section class="panel" id="pnlPanel">
+      <h3><span>Weekly P&amp;L</span><em id="coleState">COLE · SIGN IN</em></h3>
+      <div class="pnlTop"><div id="pnlTotal">—</div><div id="pnlSub">connect Cole to<br>see your week</div></div>
+      <div id="pnlBars"></div>
+      <div id="pnlToday"><span>TODAY <b id="pnlTodayTrades">0/2</b> trades</span><span><b id="pnlTodayAmt">$0</b></span></div>
+    </section>
+    <section class="panel grow">
+      <h3>Objectives <em id="taskCount">00</em></h3>
+      <ol id="tasks"></ol>
+    </section>
+  </aside>
+
+  <!-- SIDE SCREEN -->
+  <section class="panel chart side-only">
+    <h3>Chart <em id="symLabel">NAS100</em></h3>
+    <div id="chartBox"></div>
+  </section>
+  <aside class="col rail side-only">
+    <section class="panel">
+      <h3>Soundtrack</h3>
+      <iframe id="spotify" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>
+    </section>
+    <section class="panel">
+      <h3>US30 <em>1D</em></h3>
+      <div id="mini"></div>
+    </section>
+    <section class="panel grow">
+      <h3>Sessions <em>ET</em></h3>
+      <div id="sessionsSide"></div>
+    </section>
+  </aside>
+
+  <footer class="panel tape">
+    <div class="tv" id="tape"></div>
+    <div class="cmdrow">
+      <span class="dot" id="micDot"></span><span id="micLabel">MIC OFFLINE</span>
+      <input id="cmd" placeholder="type a command, or say “Spikey…” ⏎" autocomplete="off">
+    </div>
+  </footer>
+</div>
+
+<section class="panel" id="bigChartWrap"><h3><span>Chart · <span id="symLabelBig">NAS100</span></span><button id="bigClose">CLOSE ✕</button></h3><div id="bigChart"></div></section>
+<section class="panel" id="coleLogin">
+  <h3>Connect Cole</h3>
+  <div style="font-size:14px;color:var(--txt);line-height:1.4">Sign in with the same email and password you use in Cole. Spikey only reads your trades.</div>
+  <input id="coleEmail" type="email" autocomplete="username" placeholder="email">
+  <input id="colePass" type="password" autocomplete="current-password" placeholder="password">
+  <div class="btns"><button id="coleCancel">CANCEL</button><button class="go" id="coleGo">SIGN IN</button></div>
+  <div id="coleMsg"></div>
+</section>
+<div id="holo"><div id="holoTitle"></div><div id="holoBody"></div></div>
+<div id="activate">CLICK TO WAKE SPIKEY</div>
+
+<script>
+/* ===== markets + music embeds ===== */
+(() => {
+  const SIDE = new URLSearchParams(location.search).get('screen') === 'side';
+  const SPOTIFY = 'https://open.spotify.com/embed/playlist/37i9dQZF1DX6J5NfMJS675?utm_source=generator&theme=0';  // swap for your playlist
+  const TV = 'https://s3.tradingview.com/external-embedding/embed-widget-';
+  const widget = (el, name, cfg) => {
+    el.innerHTML = '<div class="tradingview-widget-container" style="height:100%;width:100%"><div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div></div>';
+    const s = document.createElement('script'); s.src = TV + name + '.js'; s.async = true; s.innerHTML = JSON.stringify(cfg);
+    el.firstChild.appendChild(s);
+  };
+  const css = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+  const names = {'OANDA:NAS100USD':'NAS100','OANDA:US30USD':'US30','OANDA:SPX500USD':'SPX500','OANDA:XAUUSD':'GOLD','BITSTAMP:BTCUSD':'BTC','TVC:USOIL':'OIL','TVC:DXY':'DXY'};
+  widget(document.getElementById('tape'), 'ticker-tape', {
+    symbols: [{proName:'OANDA:NAS100USD',title:'NAS100'},{proName:'OANDA:US30USD',title:'US30'},{proName:'OANDA:SPX500USD',title:'SPX500'},
+              {proName:'OANDA:XAUUSD',title:'GOLD'},{proName:'TVC:DXY',title:'DXY'},{proName:'BITSTAMP:BTCUSD',title:'BTC'},{proName:'TVC:USOIL',title:'OIL'}],
+    showSymbolLogo:false, isTransparent:true, displayMode:'adaptive', colorTheme:'dark', locale:'en'
+  });
+  const advanced = (el, sym) => widget(el, 'advanced-chart', {
+    autosize:true, symbol:sym, interval:'5', timezone:'America/New_York', theme:'dark', style:'1', locale:'en',
+    backgroundColor: css('--chartbg') || 'rgba(0,0,0,0)', gridColor:'rgba(255,255,255,0.04)',
+    hide_side_toolbar:false, allow_symbol_change:true, withdateranges:true, details:false, support_host:'https://www.tradingview.com'
+  });
+  const mini = (el, sym) => widget(el, 'mini-symbol-overview', {symbol:sym, width:'100%', height:'100%', locale:'en', dateRange:'1D', colorTheme:'dark', isTransparent:true, autosize:true, trendLineColor:css('--a') || '#ff2233', underLineColor:'rgba(255,34,51,0.15)'});
+  // CME futures (CME_MINI:NQ1!, COMEX:GC1!) aren't licensed for free embeds, so these track the same markets via Nasdaq-100 and spot gold.
+  const TINY = { NQ:'OANDA:NAS100USD', GC:'OANDA:XAUUSD' };
+  let current = 'OANDA:NAS100USD';
+  let bigOpen = false;
+  const label = sym => names[sym] || sym.split(':').pop();
+  window.JV_bigChart = open => {
+    const w = document.getElementById('bigChartWrap'); if (!w || SIDE) return;
+    bigOpen = open; w.classList.toggle('show', open);
+    if (open){ document.getElementById('symLabelBig').textContent = label(current); advanced(document.getElementById('bigChart'), current); }
+    else document.getElementById('bigChart').innerHTML = '';
+  };
+  window.JV_setSymbol = sym => {
+    current = sym;
+    if (SIDE){ document.getElementById('symLabel').textContent = label(sym); advanced(document.getElementById('chartBox'), sym); return; }
+    window.JV_bigChart(true);   // on the laptop, switching symbol opens the big chart
+  };
+  if (!SIDE){
+    mini(document.getElementById('tinyNQ'), TINY.NQ);
+    mini(document.getElementById('tinyGC'), TINY.GC);
+    document.querySelectorAll('[data-big]').forEach(b => b.onclick = () => { current = TINY[b.dataset.big]; window.JV_bigChart(true); });
+    document.getElementById('bigClose').onclick = () => window.JV_bigChart(false);
+    addEventListener('keydown', e => { if (e.key === 'Escape' && bigOpen) window.JV_bigChart(false); });
+    document.getElementById('spotifyMain').src = SPOTIFY;
+    return;
+  }
+  window.JV_setSymbol(current);
+  widget(document.getElementById('mini'), 'mini-symbol-overview', {symbol:'OANDA:US30USD', width:'100%', height:'100%', locale:'en', dateRange:'1D', colorTheme:'dark', isTransparent:true, autosize:true});
+  document.getElementById('spotify').src = SPOTIFY;
+  // mirror the session list onto the side rail
+  const mirror = () => { const a = document.getElementById('sessions'), b = document.getElementById('sessionsSide'); if (a && b) b.innerHTML = a.innerHTML; };
+  setInterval(mirror, 1000);
+})();
+
+/* ===== small live readouts shared by every theme ===== */
+(() => {
+  setInterval(() => {
+    const t = document.getElementById('temp'), c2 = document.getElementById('clock');
+    document.getElementById('temp2').textContent = t ? t.textContent : '--°';
+    document.getElementById('clock2').textContent = c2 ? c2.textContent + ' ' + (document.getElementById('ampm').textContent||'') : '';
+  }, 1000);
+  const c = document.getElementById('micSpark'); if (!c) return;
+  const x = c.getContext('2d'); const hist = new Array(120).fill(0);
+  const col = () => getComputedStyle(document.body).getPropertyValue('--a').trim();
+  function f(){
+    const r = c.getBoundingClientRect(); c.width = r.width*devicePixelRatio; c.height = r.height*devicePixelRatio;
+    hist.push((window.JV && JV.level) || 0); hist.shift();
+    x.clearRect(0,0,c.width,c.height); x.strokeStyle = col(); x.lineWidth = 1.5*devicePixelRatio; x.beginPath();
+    hist.forEach((v,i) => { const px = i/(hist.length-1)*c.width, py = c.height*(1 - .1 - v*.8); i ? x.lineTo(px,py) : x.moveTo(px,py); });
+    x.stroke(); setTimeout(() => requestAnimationFrame(f), 50);
+  }
+  f();
+})();
+</script>
+<script>
+/* ===== theme visuals ===== */
+/* shared canvas helpers for the core + background */
+const FX = (() => {
+  const mk = (id) => {
+    const cv = document.getElementById(id); if (!cv) return null;
+    const o = {cv, ctx: cv.getContext('2d'), W:0, H:0, D:1};
+    const rs = () => { o.D = Math.min(2, devicePixelRatio||1); const r = cv.getBoundingClientRect(); o.W = cv.width = Math.max(1,r.width*o.D); o.H = cv.height = Math.max(1,r.height*o.D); };
+    addEventListener('resize', rs); setTimeout(rs, 60); rs(); return o;
+  };
+  const rgb = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+  let smooth = 0;
+  const lvl = () => { const JV = window.JV || {level:0}; smooth += ((JV.level||0) - smooth)*0.12; return smooth; };
+  return {mk, rgb, lvl};
+})();
+
+(() => {
+  const core = FX.mk('fx'), bg = FX.mk('bgfx');
+  // palette comes from CSS vars (r,g,b triplets) so variants can recolor without touching code
+  let P = {};
+  const read = () => { const g = n => FX.rgb(n) || '255,255,255';
+    P = {top:g('--r-top'), bot:g('--r-bot'), speak:g('--r-speak'), listen:g('--r-listen'), arc:g('--r-arc'), g1:g('--r-glow1'), g2:g('--r-glow2'), ring:g('--r-ring')}; };
+  read(); setInterval(read, 1000);
+  const mix = (a, b, k) => { const A = a.split(',').map(Number), B = b.split(',').map(Number); return A.map((v,i) => Math.round(v + (B[i]-v)*k)).join(','); };
+  function drawBg(t){
+    if (!bg) return; const {ctx,W,H} = bg; ctx.clearRect(0,0,W,H);
+    const g1 = ctx.createRadialGradient(W*.3 + Math.sin(t*.1)*W*.05, H*.2, 0, W*.3, H*.2, W*.5);
+    g1.addColorStop(0,`rgba(${P.g1},.18)`); g1.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle = g1; ctx.fillRect(0,0,W,H);
+    const g2 = ctx.createRadialGradient(W*.75, H*.85 + Math.cos(t*.12)*H*.04, 0, W*.75, H*.85, W*.45);
+    g2.addColorStop(0,`rgba(${P.g2},.13)`); g2.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle = g2; ctx.fillRect(0,0,W,H);
+  }
+  let last = 0;
+  function frame(now){
+    const t = now/1000, L = FX.lvl(), JV = window.JV || {};
+    if (now - last > 100){ drawBg(t); last = now; }
+    if (core){
+      const {ctx,W,H,D} = core; ctx.clearRect(0,0,W,H);
+      const sleep = JV.mode === 'sleep', hot = JV.speaking, lis = JV.mode === 'listening';
+      const cx = W/2, cy = H/2, R = Math.min(W,H)*0.36;
+      const lines = 34, pts = 90;
+      for (let i = 0; i < lines; i++){
+        const yy = -1 + 2*(i + .5)/lines, half = Math.sqrt(Math.max(0, 1 - yy*yy));
+        const y0 = cy + yy*R;
+        ctx.beginPath();
+        for (let j = 0; j <= pts; j++){
+          const u = -1 + 2*j/pts, x = cx + u*R*half;
+          const env = Math.exp(-u*u*5);
+          const n = Math.sin(u*9 + t*2.2 + i*.8)*.5 + Math.sin(u*23 - t*3.1 + i*1.7)*.3 + Math.sin(u*41 + t*5 + i*2.3)*.2;
+          const amp = (sleep ? .03 : .12 + L*1.1 + (lis ? .15 : 0)) * env * R*.28;
+          j ? ctx.lineTo(x, y0 - Math.abs(n)*amp) : ctx.moveTo(x, y0 - Math.abs(n)*amp);
+        }
+        const k = i/lines;
+        const c = hot ? mix(P.speak, P.top, .15*(1-k)) : lis ? P.listen : mix(P.top, P.bot, k);
+        const a = hot ? .4 + .5*k : .28 + .6*(1 - Math.abs(k - .5)*1.2);
+        ctx.lineWidth = 1.6*D; ctx.strokeStyle = sleep ? 'rgba(122,115,140,.25)' : `rgba(${c},${a*(window.JV_ridgeDim ?? 1)})`;
+        ctx.fillStyle = (window.JV_ridgeDim ?? 1) < 1 ? 'rgba(6,6,8,0)' : '#060608'; ctx.lineTo(cx + R*half, y0 + 4*D); ctx.lineTo(cx - R*half, y0 + 4*D); ctx.closePath(); ctx.fill(); ctx.stroke();
+      }
+      ctx.lineWidth = 1*D; ctx.strokeStyle = `rgba(${P.ring},.32)`; ctx.beginPath(); ctx.arc(cx,cy,R*1.12,0,Math.PI*2); ctx.stroke();
+      ctx.lineWidth = 3*D; ctx.strokeStyle = `rgba(${P.arc},.95)`; ctx.beginPath(); ctx.arc(cx,cy,R*1.12,t*.4,t*.4 + .35 + L); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx,cy,R*1.12,t*.4 + Math.PI,t*.4 + Math.PI + .12 + L*.4); ctx.stroke();
+      ctx.fillStyle = 'rgba(230,225,240,.55)'; ctx.font = `${11*D}px 'JetBrains Mono', monospace`; ctx.textAlign = 'center';
+      ctx.fillText('SPIKEY — ' + (sleep ? 'STANDBY' : hot ? 'TRANSMITTING' : lis ? 'RECEIVING' : 'ONLINE'), cx, cy + R*1.24);
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+
+/* ===== Sledge B logo: 3D extruded, slowly spinning, voice-reactive ===== */
+(() => {
+  const SHAPE = {"w": 1080, "h": 1080, "bbox": [219, 98, 859, 981], "polys": [[[441, 112], [369, 301], [226, 302], [219, 320], [349, 460], [350, 682], [507, 799], [558, 800], [725, 981], [811, 879], [680, 701], [732, 658], [734, 552], [756, 554], [763, 615], [833, 630], [838, 504], [724, 493], [718, 459], [819, 373], [856, 328], [859, 304], [689, 301], [650, 99], [636, 98], [627, 99], [520, 281], [461, 119], [457, 115]]]};
+  const TEX = 'data:image/png;base64,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';
+  window.JV_ridgeDim = 0.3;               // push the ridgelines into the background
+  const host = document.getElementById('orb'); if (!host) return;
+  const cv = document.createElement('canvas');
+  cv.id = 'logo3d'; cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none';
+  host.appendChild(cv);
+
+  function fallback(){
+    cv.remove();
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;perspective:1200px;pointer-events:none';
+    const img = new Image(); img.src = TEX;
+    img.style.cssText = 'height:62%;filter:drop-shadow(0 0 30px rgba(255,34,51,.6));animation:jvspin 14s linear infinite';
+    const st = document.createElement('style'); st.textContent = '@keyframes jvspin{to{transform:rotateY(360deg)}}';
+    document.head.appendChild(st); wrap.appendChild(img); host.appendChild(wrap);
+  }
+  function start(){
+    const T = window.THREE; if (!T) return fallback();
+    let renderer;
+    try{ renderer = new T.WebGLRenderer({canvas:cv, alpha:true, antialias:true}); }catch(e){ return fallback(); }
+    renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+    renderer.outputEncoding = T.sRGBEncoding; renderer.toneMapping = T.NoToneMapping;
+    const scene = new T.Scene();
+    const camera = new T.PerspectiveCamera(32, 1, 0.1, 100);
+
+    // --- geometry from the traced outline ---
+    const [x0,y0,x1,y1] = SHAPE.bbox, cx = (x0+x1)/2, cy = (y0+y1)/2, S = Math.max(x1-x0, y1-y0);
+    const shapes = SHAPE.polys.map(P => { const sh = new T.Shape(); P.forEach(([px,py],i) => { const x = (px-cx)/S, y = -(py-cy)/S; i ? sh.lineTo(x,y) : sh.moveTo(x,y); }); sh.closePath(); return sh; });
+    const geo = new T.ExtrudeGeometry(shapes, {depth:0.085, bevelEnabled:true, bevelThickness:0.012, bevelSize:0.008, bevelSegments:3, curveSegments:4});
+    geo.translate(0, 0, -0.0425);
+
+    const tex = new T.TextureLoader().load(TEX);
+    tex.encoding = T.sRGBEncoding; tex.anisotropy = 8;
+    tex.repeat.set(S/SHAPE.w, S/SHAPE.h); tex.offset.set(cx/SHAPE.w, 1 - cy/SHAPE.h);
+    const tex2 = tex.clone(); tex2.needsUpdate = true;
+    const face = new T.MeshStandardMaterial({map:tex, emissiveMap:tex, emissive:0xffffff, emissiveIntensity:0.12, roughness:0.5, metalness:0.1, alphaTest:0.5});
+    const back = face.clone(); back.map = tex2; back.emissiveMap = tex2;
+    const side = new T.MeshStandardMaterial({color:0xeeeaec, emissive:0xff2233, emissiveIntensity:0.12, roughness:0.35, metalness:0.25});
+    const mesh = new T.Mesh(geo, [face, side]);
+    // back plate: the same logo, flipped so it reads correctly from behind
+    const plateGeo = new T.ShapeGeometry(shapes);
+    const plate = new T.Mesh(plateGeo, back);
+    plate.rotation.y = Math.PI; plate.scale.x = -1; plate.position.z = -0.056;
+    const rig = new T.Group(); rig.add(mesh); rig.add(plate); scene.add(rig);
+
+    // red halo behind the model
+    const g = document.createElement('canvas'); g.width = g.height = 256;
+    const gx = g.getContext('2d'), rg = gx.createRadialGradient(128,128,0,128,128,128);
+    rg.addColorStop(0,'rgba(255,34,51,.9)'); rg.addColorStop(.4,'rgba(255,34,51,.25)'); rg.addColorStop(1,'rgba(255,34,51,0)');
+    gx.fillStyle = rg; gx.fillRect(0,0,256,256);
+    const halo = new T.Sprite(new T.SpriteMaterial({map:new T.CanvasTexture(g), transparent:true, depthWrite:false, blending:T.AdditiveBlending}));
+    halo.scale.set(1.5,1.5,1); halo.position.z = -0.6; scene.add(halo);
+
+    // lights
+    scene.add(new T.AmbientLight(0xffffff, 0.22));
+    const key = new T.DirectionalLight(0xffffff, 0.6); key.position.set(1.2, 1.5, 2.5); scene.add(key);
+    const rim = new T.PointLight(0xff2233, 2.2, 6); rim.position.set(-1.2, 0.4, -1.2); scene.add(rim);
+    const uv = new T.PointLight(0xb57bff, 1.2, 6); uv.position.set(1.4, -0.8, 1.0); scene.add(uv);
+
+    function size(){
+      const r = host.getBoundingClientRect(); if (!r.width || !r.height) return;
+      renderer.setSize(r.width, r.height, false);
+      camera.aspect = r.width / r.height;
+      const fit = 0.64 * Math.min(1, r.width / r.height);          // model fills ~64% of the core
+      camera.position.z = (1/fit) / 2 / Math.tan(T.MathUtils.degToRad(camera.fov/2));
+      camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(size).observe(host); size();
+
+    let spin = 0, lvl = 0, last = performance.now();
+    function frame(now){
+      const dt = Math.min(0.05, (now - last)/1000); last = now;
+      const JV = window.JV || {}, t = now/1000;
+      lvl += ((JV.level || 0) - lvl) * 0.15;
+      const sleep = JV.mode === 'sleep', talk = JV.speaking, lis = JV.mode === 'listening';
+      spin += dt * (sleep ? 0.12 : talk ? 0.9 : lis ? 0.6 : 0.35);  // slow idle spin, faster while talking
+      rig.rotation.y = spin;
+      rig.rotation.x = 0.08 * Math.sin(t*0.6);
+      rig.position.y = 0.015 * Math.sin(t*1.1);
+      const s = 1 + lvl*0.06; rig.scale.set(s, s, s);
+      face.emissiveIntensity = back.emissiveIntensity = sleep ? 0.2 : 0.55 + lvl*0.45 + (lis ? 0.1 : 0);
+      side.emissiveIntensity = sleep ? 0.02 : 0.1 + lvl*0.5;
+      rim.intensity = sleep ? 0.4 : 2 + lvl*4;
+      halo.material.opacity = sleep ? 0.15 : 0.45 + lvl*0.55;
+      halo.scale.setScalar(1.45 + lvl*0.5);
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  // load three.js from cdnjs; fall back to a flat spinning logo if offline
+  if (window.THREE) start();
+  else {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+    s.onload = start; s.onerror = fallback; document.head.appendChild(s);
+  }
+})();
+
+</script>
+<script>
+/* ===== Cole link: weekly P&L from Cole's Supabase (read-only) ===== */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  // Cole's own sync connection (Nick approved Spikey reusing it). Read-only; he signs in with his Cole login.
+  const SB_URL = 'https://ntuzsyfzgfgxkmyqniqz.supabase.co';
+  const SB_KEY = 'sb_publishable_RxVn21A1NCVsMlCh03cvHw_vnBxCP2q';
+  const RULES = ['plan', 'size', 'noRevenge', 'noFomo', 'window'];      // Cole's 5 trading rules
+  const $ = id => document.getElementById(id);
+  const pad = n => String(n).padStart(2, '0');
+  const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const money = n => (n > 0 ? '+' : n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
+  const speakMoney = n => '$' + Math.abs(Math.round(n)).toLocaleString();
+  const tradeClean = t => RULES.every(k => t.rules && t.rules[k]);
+  const dayClean = trades => trades.length <= 2 && trades.every(tradeClean);
+  let sb = null, uid = null, week = null, todos = [];
+  const RULE_SPOKEN = {plan:'a trade off your plan', size:'oversizing', noRevenge:'a revenge trade', noFomo:'a FOMO chase', window:'trading outside the nine thirty to ten thirty window'};
+  const andList = a => a.length === 1 ? a[0] : a.slice(0, -1).join(', ') + ', and ' + a[a.length - 1];
+  const DAY_SPOKEN = {MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday'};
+  let readyResolve; window.JV_coleReady = new Promise(r => readyResolve = r);
+
+  function weekKeys(){
+    const now = new Date(), mon = new Date(now); mon.setHours(12,0,0,0);
+    mon.setDate(mon.getDate() - ((now.getDay() + 6) % 7));
+    return Array.from({length:7}, (_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return {key:keyOf(d), label:['MON','TUE','WED','THU','FRI','SAT','SUN'][i], d}; });
+  }
+
+  // turn Cole's day docs into this week's numbers
+  function compute(rows){
+    const byKey = {}; (rows || []).forEach(r => { byKey[r.path.split('/').pop()] = r.data || {}; });
+    todos = Object.keys(byKey).sort().reverse().flatMap(k => (byKey[k].tasks || []).filter(t => t && t.text && !t.done).map(t => String(t.text)));
+    const today = keyOf(new Date());
+    const days = weekKeys().map(w => {
+      const trades = (byKey[w.key] && Array.isArray(byKey[w.key].trades)) ? byKey[w.key].trades : [];
+      const pnl = trades.reduce((s, t) => s + (+t.pnl || 0), 0);
+      return {...w, trades, pnl, clean: trades.length ? dayClean(trades) : null, today: w.key === today};
+    });
+    const traded = days.filter(d => d.trades.length);
+    return {
+      days, total: days.reduce((s, d) => s + d.pnl, 0),
+      nTrades: days.reduce((s, d) => s + d.trades.length, 0),
+      tradedDays: traded.length, cleanDays: traded.filter(d => d.clean).length,
+      today: days.find(d => d.today)
+    };
+  }
+
+  function render(w){
+    week = w;
+    const tot = $('pnlTotal'); if (!tot) return;
+    tot.textContent = w.nTrades ? money(w.total) : '$0';
+    tot.className = w.total > 0 ? 'up' : w.total < 0 ? 'down' : '';
+    $('pnlSub').innerHTML = w.nTrades
+      ? `${w.nTrades} trade${w.nTrades === 1 ? '' : 's'} this week<br>${w.cleanDays}/${w.tradedDays} clean day${w.tradedDays === 1 ? '' : 's'}`
+      : 'no trades logged<br>this week yet';
+    const show = w.days.filter((d, i) => i < 5 || d.trades.length);    // Mon–Fri, plus weekend days you actually traded
+    const max = Math.max(1, ...show.map(d => Math.abs(d.pnl)));
+    $('pnlBars').innerHTML = show.map(d => {
+      const h = d.trades.length ? Math.max(4, Math.abs(d.pnl) / max * 50) : 0;
+      const cls = !d.trades.length || d.pnl === 0 ? 'flat' : d.pnl > 0 ? 'up' : 'down';
+      const state = d.clean === null ? '' : d.clean ? 'clean' : 'broken';
+      return `<div class="pb ${d.today ? 'today' : ''} ${state}" title="${d.key}"><div class="col"><i class="${cls}" style="height:${h}%"></i></div><span>${d.trades.length ? money(d.pnl) : '·'}</span><small>${d.label}</small></div>`;
+    }).join('');
+    const t = w.today || {trades:[], pnl:0};
+    $('pnlTodayTrades').textContent = `${t.trades.length}/2`;
+    $('pnlTodayAmt').textContent = money(t.pnl) || '$0';
+    $('pnlTodayAmt').style.color = t.pnl > 0 ? 'var(--good)' : t.pnl < 0 ? 'var(--red)' : '';
+  }
+  window.JV_renderPnl = rows => render(compute(rows));      // also used by tests
+  // ---- write to Cole: sort what Nick said (same rules as Cole) and save it into today's page ----
+  const SORT_PROMPT = txt => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades YM/MYM futures (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
+Split this voice brain-dump into sectors. Keep his own words, lightly cleaned up; never invent facts.
+Brain-dump: """${txt}"""
+Return JSON only:
+{"journal":[{"tag":"trading|journal|family|business|fitness","text":string}],
+ "meals":[{"name":string,"kcal":int,"p":int,"c":int,"f":int,"cost":number|0}],
+ "ideas":[{"area":"content|events|business|other","text":string}],
+ "tasks":[{"text":string}],
+ "spend":[{"what":string,"amt":number,"cat":"Food|Gas|Trading|Business|Other"}],
+ "flags":["gym"|"reel"|"family"]}
+Rules: trade mindset, emotions and trade recaps go in journal with tag "trading". Food eaten goes in meals with estimated macros (typical chain values if named); if a price was said for food put it in that meal's cost, NOT in spend. Non-food purchases go in spend. flags only for things he says he already did today (worked out, posted a reel, spent time with my brothers & sister). Empty arrays when nothing fits.`;
+  window.JV_coleLog = async (txt, askJSON) => {
+    if (!sb || !uid) return {ok:false, message:"Cole isn't signed in on Spikey yet. Tap Cole, sign in, on the P and L panel."};
+    const A = v => Array.isArray(v) ? v : [];
+    const out = await askJSON(SORT_PROMPT(txt));
+    const TAGS = ['trading','journal','family','business','fitness'];
+    const r = {
+      journal: A(out.journal).filter(j => j && j.text).map(j => ({tag: TAGS.includes(j.tag) ? j.tag : 'journal', text:String(j.text)})),
+      meals: A(out.meals).filter(m => m && m.name).map(m => ({name:String(m.name).slice(0,80), kcal:Math.round(+m.kcal||0), p:Math.round(+m.p||0), c:Math.round(+m.c||0), f:Math.round(+m.f||0), cost:+m.cost||0})),
+      ideas: A(out.ideas).filter(x => x && x.text).map(x => ({area:String(x.area||'other'), text:String(x.text)})),
+      tasks: A(out.tasks).filter(x => x && x.text).map(x => ({text:String(x.text), done:false})),
+      spend: A(out.spend).filter(x => x && +x.amt).map(x => ({what:String(x.what||''), amt:+x.amt, cat:String(x.cat||'Other')})),
+      flags: A(out.flags).filter(f => ['gym','reel','family'].includes(f))
+    };
+    const path = 'days/' + keyOf(new Date());
+    const {data:row, error:e1} = await sb.from('cole_docs').select('data').eq('path', path).maybeSingle();
+    if (e1) return {ok:false, message:"Couldn't reach Cole right now."};
+    const blank = {checkin:null,trades:[],meals:[],spend:[],gym:false,reel:false,family:false,lossAt:null,journal:[],ideas:[],tasks:[],sched:{},laptop:{},slips:{},slipLog:[]};
+    const d = Object.assign(blank, (row && row.data) || {});
+    ['journal','meals','ideas','tasks','spend'].forEach(k => { if (!Array.isArray(d[k])) d[k] = []; });
+    const at = Date.now();
+    r.journal.forEach(j => d.journal.push({...j, at}));
+    r.meals.forEach(m => d.meals.push(m));
+    r.ideas.forEach(x => d.ideas.push({...x, at}));
+    r.tasks.forEach(x => d.tasks.push({...x, at}));
+    r.spend.forEach(x => d.spend.push({...x, at}));
+    r.flags.forEach(f => d[f] = true);
+    d.journal.push({tag:'raw', text:txt, at, hidden:true});
+    const {error:e2} = await sb.from('cole_docs').upsert({user_id:uid, path, data:d, updated_at:new Date().toISOString()}, {onConflict:'user_id,path'});
+    if (e2) return {ok:false, message:"Couldn't save to Cole: " + e2.message};
+    refresh();
+    const parts = [];
+    if (r.journal.length) parts.push(r.journal.length + ' journal');
+    if (r.meals.length) parts.push(r.meals.length + ' meal' + (r.meals.length > 1 ? 's' : ''));
+    if (r.ideas.length) parts.push(r.ideas.length + ' idea' + (r.ideas.length > 1 ? 's' : ''));
+    if (r.tasks.length) parts.push(r.tasks.length + ' to-do' + (r.tasks.length > 1 ? 's' : ''));
+    if (r.spend.length) parts.push(r.spend.length + ' expense' + (r.spend.length > 1 ? 's' : ''));
+    return {ok:true, message:'Saved to Cole: ' + (parts.join(', ') || 'journal') + '.', sorted:r};
+  };
+  window.JV_coleSignedIn = () => !!uid;
+  window.JV_coleTodos = () => (uid || todos.length) ? todos.slice() : null;
+  const signed = n => (n >= 0 ? 'up ' : 'down ') + speakMoney(n);
+
+  // full spoken breakdown: P&L by day, which rules were broken, clean vs broken totals
+  window.JV_pnlBreakdown = () => {
+    if (!uid && !(week && week.nTrades)) return null;
+    const w = week;
+    if (!w || !w.nTrades) return 'No trades logged in Cole this week yet.';
+    const out = [w.total === 0 ? `This week you're flat across ${w.nTrades} trades.` : `This week you're ${signed(w.total)} across ${w.nTrades} trade${w.nTrades === 1 ? '' : 's'}.`];
+    w.days.filter(d => d.trades.length).forEach(d => {
+      const broken = [...new Set(d.trades.flatMap(t => RULES.filter(k => !(t.rules && t.rules[k]))))].map(k => RULE_SPOKEN[k]);
+      const over = d.trades.length > 2;
+      const rule = d.clean ? 'rules followed.' : 'rules broken: ' + andList([...broken, ...(over ? ['going over the two-trade limit'] : [])]) + '.';
+      out.push(`${d.today ? 'Today' : DAY_SPOKEN[d.label]}, ${d.pnl === 0 ? 'flat' : signed(d.pnl)}, ${rule}`);
+    });
+    out.push(`You followed your rules on ${w.cleanDays} of ${w.tradedDays} trading day${w.tradedDays === 1 ? '' : 's'}.`);
+    const cleanP = w.days.filter(d => d.clean === true).reduce((s, d) => s + d.pnl, 0);
+    const dirtyP = w.days.filter(d => d.clean === false).reduce((s, d) => s + d.pnl, 0);
+    if (w.cleanDays && w.cleanDays < w.tradedDays) out.push(`Clean days made ${speakMoney(cleanP)}${cleanP < 0 ? ' in losses' : ''}. Rule-broken days ${dirtyP < 0 ? 'cost you ' + speakMoney(dirtyP) : 'made ' + speakMoney(dirtyP)}.`);
+    if (w.today && !w.today.trades.length) out.push('No trades yet today.');
+    return out.join(' ');
+  };
+
+  // spoken summary for "Spikey, what's my P&L" and the briefing
+  window.JV_pnlSentence = () => {
+    if (!uid && !(week && week.nTrades)) return null;   // not linked: let Spikey say so
+    if (!week || !week.nTrades) return 'No trades logged in Cole this week yet.';
+    const w = week, dir = w.total > 0 ? 'up' : w.total < 0 ? 'down' : 'flat';
+    let s = dir === 'flat' ? `You're flat this week` : `You're ${dir} ${speakMoney(w.total)} this week`;
+    s += ` across ${w.nTrades} trade${w.nTrades === 1 ? '' : 's'}, with ${w.cleanDays} of ${w.tradedDays} trading day${w.tradedDays === 1 ? '' : 's'} clean.`;
+    const t = w.today;
+    if (t && t.trades.length) s += ` Today: ${t.trades.length} of 2 trades, ${t.pnl >= 0 ? 'up' : 'down'} ${speakMoney(t.pnl)}.`;
+    return s;
+  };
+
+  function state(text, on){ const e = $('coleState'); if (e){ e.textContent = text; e.classList.toggle('on', !!on); } }
+
+  async function refresh(){
+    if (!sb || !uid) return;
+    const {data, error} = await sb.from('cole_docs').select('path,data').like('path', 'days/%');
+    if (error){ state('COLE · OFFLINE'); readyResolve(); return; }
+    render(compute(data));
+    state('COLE ● LIVE', true);
+    readyResolve();
+  }
+
+  function connected(user){
+    uid = user.id;
+    refresh();
+    // live: redraw the moment you log a trade in Cole on any device
+    sb.channel('spikey-' + uid)
+      .on('postgres_changes', {event:'*', schema:'public', table:'cole_docs', filter:'user_id=eq.' + uid}, p => {
+        const path = (p.new && p.new.path) || (p.old && p.old.path) || '';
+        if (path.startsWith('days/')) refresh();
+      }).subscribe();
+    setInterval(refresh, 5 * 60 * 1000);   // backup poll + picks up the new week on Monday
+  }
+
+  // --- sign-in modal (you type your Cole login; it's stored only in this browser profile) ---
+  const modal = () => $('coleLogin');
+  function openLogin(){ if (uid){ refresh(); return; } modal().classList.add('show'); $('coleMsg').textContent = ''; setTimeout(() => $('coleEmail').focus(), 50); }
+  function wire(){
+    $('coleState').onclick = openLogin;
+    $('coleCancel').onclick = () => modal().classList.remove('show');
+    const go = async () => {
+      if (!sb){ $('coleMsg').textContent = 'Still loading. Try again in a second.'; return; }
+      $('coleMsg').textContent = 'Signing in…';
+      const {data, error} = await sb.auth.signInWithPassword({email:$('coleEmail').value.trim(), password:$('colePass').value});
+      if (error){ $('coleMsg').textContent = "Couldn't sign in: " + error.message; return; }
+      $('colePass').value = ''; modal().classList.remove('show'); connected(data.user);
+    };
+    $('coleGo').onclick = go;
+    $('colePass').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    // keep typing in the login box from triggering Spikey's Space push-to-talk
+    ['coleEmail','colePass'].forEach(id => $(id).addEventListener('keydown', e => e.stopPropagation()));
+  }
+  wire();
+  render(compute([]));
+  if (!SB_URL || !SB_KEY){
+    state('COLE · NOT LINKED'); readyResolve();
+    $('coleState').onclick = () => { modal().classList.add('show'); $('coleMsg').textContent = "Cole isn't linked to Spikey yet."; };
+    return;
+  }
+
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js';
+  s.onload = async () => {
+    sb = window.supabase.createClient(SB_URL, SB_KEY, {auth:{persistSession:true, autoRefreshToken:true, storageKey:'spikey-cole-auth'}});
+    const {data:{session}} = await sb.auth.getSession();
+    if (session) connected(session.user); else { state('COLE · SIGN IN'); readyResolve(); }
+  };
+  s.onerror = () => { state('COLE · OFFLINE'); readyResolve(); };
+  document.head.appendChild(s);
+})();
+
+</script>
+<script>
+/* ===== Spotify (Premium): log in once, then Spikey can search + play anything on your Spotify app ===== */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  const LS = k => 'spikey.spotify.' + k;
+  const get = k => { try{ return localStorage.getItem(LS(k)) || ''; }catch{ return ''; } };
+  const put = (k, v) => { try{ v ? localStorage.setItem(LS(k), v) : localStorage.removeItem(LS(k)); }catch{} };
+  const REDIRECT = location.origin + location.pathname;          // e.g. https://nick1400-ux.github.io/cole/spikey/
+  const SCOPES = 'user-read-playback-state user-modify-playback-state user-read-currently-playing';
+  const $ = id => document.getElementById(id);
+
+  const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  async function login(){
+    const cid = get('clientId'); if (!cid) throw new Error('no-client-id');
+    const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+    const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+    put('verifier', verifier);
+    location.href = 'https://accounts.spotify.com/authorize?' + new URLSearchParams({client_id:cid, response_type:'code', redirect_uri:REDIRECT, scope:SCOPES, code_challenge_method:'S256', code_challenge:challenge});
+  }
+  async function tokenRequest(params){
+    const r = await fetch('https://accounts.spotify.com/api/token', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams({client_id:get('clientId'), ...params})});
+    if (!r.ok) throw new Error('token ' + r.status);
+    const j = await r.json();
+    put('access', j.access_token); put('expires', String(Date.now() + (j.expires_in - 60) * 1000));
+    if (j.refresh_token) put('refresh', j.refresh_token);
+  }
+  // back from Spotify's login page with ?code=
+  async function finishLogin(){
+    const q = new URLSearchParams(location.search), code = q.get('code');
+    if (!code || !get('verifier')) return;
+    try{ await tokenRequest({grant_type:'authorization_code', code, redirect_uri:REDIRECT, code_verifier:get('verifier')}); }
+    catch(e){ console.warn('spotify login failed', e); }
+    put('verifier', '');
+    history.replaceState(null, '', location.pathname);
+  }
+  async function token(){
+    if (!get('refresh') && !get('access')) return null;
+    if (Date.now() < +get('expires')) return get('access');
+    if (!get('refresh')) return null;
+    try{ await tokenRequest({grant_type:'refresh_token', refresh_token:get('refresh')}); return get('access'); }catch{ return null; }
+  }
+  async function api(path, opts = {}){
+    const t = await token(); if (!t) throw new Error('not-connected');
+    const r = await fetch('https://api.spotify.com/v1' + path, {...opts, headers:{Authorization:'Bearer ' + t, 'Content-Type':'application/json', ...(opts.headers || {})}});
+    if (r.status === 204) return null;
+    const txt = await r.text(); const j = txt ? JSON.parse(txt) : null;
+    if (!r.ok){ const m = (j && j.error && (j.error.reason || j.error.message)) || r.status; const err = new Error(String(m)); err.status = r.status; throw err; }
+    return j;
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function device(){
+    let {devices} = await api('/me/player/devices');
+    let d = devices.find(x => x.is_active) || devices.find(x => x.type === 'Computer') || devices[0];
+    if (!d){
+      location.href = 'spotify:';                         // open the Spotify desktop app, then wait for it to show up
+      for (let i = 0; i < 8 && !d; i++){ await sleep(1500); ({devices} = await api('/me/player/devices')); d = devices.find(x => x.type === 'Computer') || devices[0]; }
+    }
+    return d || null;
+  }
+
+  // public API used by Spikey's brain + quick commands
+  window.JV_spotify = {
+    connected: () => !!(get('refresh') || get('access')),
+    hasClientId: () => !!get('clientId'),
+    setClientId: v => put('clientId', (v || '').trim()),
+    login, redirect: REDIRECT,
+    disconnect(){ ['access','refresh','expires'].forEach(k => put(k, '')); },
+    async play(query, type = 'track'){
+      type = ['track','artist','album','playlist'].includes(type) ? type : 'track';
+      const res = await api('/search?' + new URLSearchParams({q:query, type, limit:'1', market:'from_token'}));
+      const item = res && res[type + 's'] && res[type + 's'].items && res[type + 's'].items.filter(Boolean)[0];
+      if (!item) return {ok:false, message:`Couldn't find ${query} on Spotify.`};
+      const d = await device();
+      if (!d) return {ok:false, message:'Spotify isn’t open on any device. Open the Spotify app and try again.'};
+      const body = type === 'track' ? {uris:[item.uri]} : {context_uri:item.uri};
+      await api('/me/player/play?device_id=' + encodeURIComponent(d.id), {method:'PUT', body:JSON.stringify(body)});
+      const who = item.artists ? ' by ' + item.artists.map(a => a.name).join(', ') : (item.owner ? ' from ' + item.owner.display_name : '');
+      setTimeout(nowPlaying, 1500);
+      return {ok:true, message:`Playing ${item.name}${who}.`, device:d.name};
+    },
+    async control(action, value){
+      const d = await device(); const q = d ? '?device_id=' + encodeURIComponent(d.id) : '';
+      if (action === 'pause') await api('/me/player/pause' + q, {method:'PUT'});
+      else if (action === 'resume' || action === 'play') await api('/me/player/play' + q, {method:'PUT'});
+      else if (action === 'next') await api('/me/player/next' + q, {method:'POST'});
+      else if (action === 'previous') await api('/me/player/previous' + q, {method:'POST'});
+      else if (action === 'volume') await api('/me/player/volume?volume_percent=' + Math.max(0, Math.min(100, Math.round(+value || 50))) + (d ? '&device_id=' + encodeURIComponent(d.id) : ''), {method:'PUT'});
+      else if (action === 'shuffle') await api('/me/player/shuffle?state=' + (value ? 'true' : 'false') + (d ? '&device_id=' + encodeURIComponent(d.id) : ''), {method:'PUT'});
+      setTimeout(nowPlaying, 1200);
+      return {ok:true};
+    },
+    async current(){
+      const j = await api('/me/player/currently-playing');
+      if (!j || !j.item) return null;
+      return {name:j.item.name, artist:(j.item.artists || []).map(a => a.name).join(', '), playing:j.is_playing, art:(j.item.album && j.item.album.images[1] || j.item.album.images[0] || {}).url};
+    }
+  };
+
+  // now-playing card replaces the embed once you're connected
+  async function nowPlaying(){
+    const box = $('nowPlaying'); if (!box || !window.JV_spotify.connected()) return;
+    let c = null; try{ c = await window.JV_spotify.current(); }catch{}
+    const emb = $('spotifyMain'); if (emb) emb.style.display = 'none';
+    box.style.display = 'flex';
+    box.innerHTML = c
+      ? `<img src="${c.art || ''}" alt=""><div class="np"><b>${c.name.replace(/</g,'&lt;')}</b><span>${c.artist.replace(/</g,'&lt;')}</span>
+         <div class="npc"><button data-sp="previous">⏮</button><button data-sp="${c.playing ? 'pause' : 'resume'}">${c.playing ? '⏸' : '▶'}</button><button data-sp="next">⏭</button></div></div>`
+      : `<div class="np"><b>Spotify connected</b><span>Say “Spikey, play …”</span></div>`;
+    box.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => window.JV_spotify.control(b.dataset.sp).catch(() => {}));
+  }
+  window.JV_spotifyRefresh = nowPlaying;
+  finishLogin().then(() => { nowPlaying(); setInterval(nowPlaying, 10000); });
+})();
+
+</script>
+<script>
+/* ===== Spikey's brain: Claude with tools (answers questions, searches the web, controls Spotify/YouTube/TradingView, writes to Cole) ===== */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  const KEY_LS = 'spikey.claudeKey';
+  const MODEL = 'claude-haiku-4-5-20251001';        // fast enough for voice
+  const key = () => { try{ return localStorage.getItem(KEY_LS) || ''; }catch{ return ''; } };
+  const history = [];                                 // short memory of this session (text turns only)
+
+  async function call(body){
+    let r;
+    try{
+      r = await fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers:{'content-type':'application/json', 'x-api-key':key(), 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify(body)});
+    }catch{ throw new Error("I can't reach my brain right now. Check the internet."); }
+    if (r.status === 401 || r.status === 403) throw new Error('My Claude key was rejected. Check it in Setup.');
+    if (r.status === 429 || r.status === 529) throw new Error("Claude is busy right now. Try me again in a minute.");
+    if (!r.ok){ let m = ''; try{ m = (await r.json()).error.message; }catch{} throw new Error('Claude error. ' + m); }
+    return r.json();
+  }
+  async function askJSON(prompt){
+    const j = await call({model:'claude-sonnet-5-5', max_tokens:1500, messages:[{role:'user', content:prompt + '\n\nReply with the JSON object only. No prose, no code fences.'}]});
+    const t = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    const m = t.match(/\{[\s\S]*\}/); return JSON.parse(m ? m[0] : t);
+  }
+
+  const TOOLS = [
+    {type:'web_search_20250305', name:'web_search', max_uses:3},
+    {name:'play_spotify', description:'Play a song, artist, album or playlist on Nick\'s Spotify (Premium).', input_schema:{type:'object', properties:{query:{type:'string', description:'e.g. "Lose Yourself Eminem" or "techno bunker"'}, type:{type:'string', enum:['track','artist','album','playlist']}}, required:['query']}},
+    {name:'spotify_control', description:'Pause, resume, skip, go back, set volume (0-100) or shuffle on Spotify.', input_schema:{type:'object', properties:{action:{type:'string', enum:['pause','resume','next','previous','volume','shuffle']}, value:{type:'number'}}, required:['action']}},
+    {name:'open_youtube', description:'Open YouTube search results for a query in a new window. To play one specific video, first find its youtube.com/watch URL with web_search and use open_website instead.', input_schema:{type:'object', properties:{query:{type:'string'}}, required:['query']}},
+    {name:'open_tradingview', description:'Open a TradingView chart. Futures use TradingView symbols like CME_MINI:NQ1!, CBOT_MINI:YM1!, CBOT_MINI:MYM1!, COMEX:GC1!, CME_MINI:ES1!.', input_schema:{type:'object', properties:{symbol:{type:'string'}}, required:['symbol']}},
+    {name:'open_website', description:'Open any web page in a new window.', input_schema:{type:'object', properties:{url:{type:'string'}}, required:['url']}},
+    {name:'show_chart', description:'Show a big chart inside Spikey\'s own screen. Use names like NAS100, US30, SPX500, GOLD, BTC, OIL, DXY.', input_schema:{type:'object', properties:{symbol:{type:'string'}}, required:['symbol']}},
+    {name:'add_task', description:'Add an objective to Spikey\'s on-screen list.', input_schema:{type:'object', properties:{text:{type:'string'}}, required:['text']}},
+    {name:'complete_task', description:'Mark one of Spikey\'s objectives done, by its number (1 = first).', input_schema:{type:'object', properties:{number:{type:'integer'}}, required:['number']}},
+    {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. Use when he says log, journal, note, tell Cole, or describes his trades, food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
+    {name:'get_trading_week', description:'Nick\'s P&L this week from Cole, by day, with which trading rules he broke.', input_schema:{type:'object', properties:{}}},
+    {name:'get_todos', description:'Nick\'s open to-dos in Cole plus Spikey\'s objectives.', input_schema:{type:'object', properties:{}}}
+  ];
+
+  const open = url => { const w = window.open(url, '_blank'); return w ? 'Opened.' : 'The window was blocked.'; };
+  async function run(name, input){
+    try{
+      switch (name){
+        case 'play_spotify':
+          if (window.JV_spotify && window.JV_spotify.connected()) return (await window.JV_spotify.play(input.query, input.type || 'track')).message;
+          location.href = 'spotify:search:' + encodeURIComponent(input.query);
+          return 'Spotify is not connected in Spikey Setup yet, so I opened the search in the Spotify app instead of playing it.';
+        case 'spotify_control':
+          if (!(window.JV_spotify && window.JV_spotify.connected())) return 'Spotify is not connected in Setup.';
+          await window.JV_spotify.control(input.action, input.value); return 'Done.';
+        case 'open_youtube': return open('https://www.youtube.com/results?search_query=' + encodeURIComponent(input.query));
+        case 'open_tradingview': return open('https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(input.symbol));
+        case 'open_website': return open(/^https?:\/\//.test(input.url) ? input.url : 'https://' + input.url);
+        case 'show_chart': {
+          const map = {NAS100:'OANDA:NAS100USD', NQ:'OANDA:NAS100USD', US30:'OANDA:US30USD', YM:'OANDA:US30USD', DOW:'OANDA:US30USD', SPX500:'OANDA:SPX500USD', ES:'OANDA:SPX500USD', GOLD:'OANDA:XAUUSD', GC:'OANDA:XAUUSD', BTC:'BITSTAMP:BTCUSD', OIL:'TVC:USOIL', DXY:'TVC:DXY'};
+          const s = map[String(input.symbol).toUpperCase().replace(/\s/g,'')] || input.symbol;
+          if (window.JV_setSymbol) window.JV_setSymbol(s); return 'Chart is up.';
+        }
+        case 'add_task': window.JV_tasks.add(input.text); return 'Added.';
+        case 'complete_task': return window.JV_tasks.complete(input.number);
+        case 'log_to_cole': return (await window.JV_coleLog(input.text, askJSON)).message;
+        case 'get_trading_week': return (window.JV_pnlBreakdown && window.JV_pnlBreakdown()) || 'Cole is not signed in on Spikey, so I cannot see trades.';
+        case 'get_todos': return JSON.stringify({cole:(window.JV_coleTodos && window.JV_coleTodos()) || 'Cole not signed in', spikey:window.JV_tasks.list()});
+      }
+      return 'Unknown tool.';
+    }catch(e){ return 'Failed: ' + (e.message || e); }
+  }
+
+  function system(){
+    const now = new Date();
+    return `You are Spikey, Nick's personal voice assistant, running on his laptop dashboard. Sledge B is his brand ("by outcasts for outcasts"). Nick is a Miami Mercedes-Benz technician who day trades MYM/YM futures with strict rules (max 2 trades a day, no revenge trades, no oversizing, no FOMO, trade only 9:30 to 10:30 ET) and runs Sledge B events and content.
+Your replies are SPOKEN ALOUD. Keep them to 1 to 3 short sentences, casual and direct, no markdown, no lists, no emojis, never read out URLs. Say numbers naturally.
+Use your tools to act: play music on Spotify, open YouTube, TradingView or websites, show charts, manage objectives, log things into Cole, and look up his trading week and to-dos. Use web_search for anything current (news, prices, scores, weather elsewhere, facts you are unsure of).
+Never give specific trade calls or financial advice. If he's clearly about to break a trading rule, remind him.
+Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', weekday:'long', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'})} Eastern time, and he is in Miami.`;
+  }
+
+  async function ask(text){
+    if (!key()) return null;
+    const messages = [...history, {role:'user', content:text}];
+    let final = '';
+    for (let step = 0; step < 6; step++){
+      const res = await call({model:MODEL, max_tokens:700, system:system(), tools:TOOLS, messages});
+      messages.push({role:'assistant', content:res.content});
+      const uses = (res.content || []).filter(b => b.type === 'tool_use');
+      final = (res.content || []).filter(b => b.type === 'text').map(b => b.text).join(' ').trim() || final;
+      if (res.stop_reason === 'pause_turn') continue;                 // long web search: let it keep going
+      if (!uses.length) break;
+      const results = [];
+      for (const u of uses) results.push({type:'tool_result', tool_use_id:u.id, content:String(await run(u.name, u.input || {}))});
+      messages.push({role:'user', content:results});
+    }
+    final = final.replace(/[*_#`>]/g, '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim() || 'Done.';
+    history.push({role:'user', content:text}, {role:'assistant', content:final});
+    while (history.length > 16) history.shift();
+    return final;
+  }
+
+  window.JV_brain = {
+    hasKey: () => !!key(),
+    setKey: v => { try{ v ? localStorage.setItem(KEY_LS, v.trim()) : localStorage.removeItem(KEY_LS); }catch{} },
+    ask, askJSON
+  };
+})();
+
+</script>
+<script>
+/* ===== JARVIS ENGINE v2 — shared by every look ===== */
+(() => {
+  const CONFIG = {
+    name: 'Nick',
+    address: 'sir',
+    lat: 25.7617, lon: -80.1918, city: 'Miami',
+    sites: {
+      youtube:'https://www.youtube.com', gmail:'https://mail.google.com', email:'https://mail.google.com',
+      calendar:'https://calendar.google.com', tradingview:'https://www.tradingview.com/chart/',
+      'trading view':'https://www.tradingview.com/chart/', spotify:'spotify:',
+      claude:'https://claude.ai', instagram:'https://www.instagram.com', github:'https://github.com',
+      maps:'https://maps.google.com', news:'https://news.google.com'
+    }
+  };
+  // Speech recognition often mishears "Jarvis". Accept the common mishearings.
+  const NAME = 'Spikey';
+  // Speech recognition mishears "Spikey" a lot; accept the common versions (plus "Jarvis" as a backup).
+  const WAKE = /\b(?:hey |ok |okay |yo )?(spikey|spiky|spikie|spikee|spikey'?s|spiky'?s|spike[ -]?(?:y|ee|e|he|key)|spy ?key|spicey|spicy|sparky|spooky|psyche?y?|jarvis)\b/i;
+
+  const SIDE = new URLSearchParams(location.search).get('screen') === 'side';
+  document.body.dataset.screen = SIDE ? 'side' : 'main';
+  const bus = ('BroadcastChannel' in window) ? new BroadcastChannel('jarvis') : null;
+  const SYMBOLS = {
+    'nas 100':'OANDA:NAS100USD','nas100':'OANDA:NAS100USD','nasdaq':'OANDA:NAS100USD','nq':'OANDA:NAS100USD',
+    'us 30':'OANDA:US30USD','us30':'OANDA:US30USD','dow':'OANDA:US30USD','ym':'OANDA:US30USD',
+    's&p':'OANDA:SPX500USD','spx':'OANDA:SPX500USD','s and p':'OANDA:SPX500USD',
+    'gold':'OANDA:XAUUSD','gc':'OANDA:XAUUSD','g c':'OANDA:XAUUSD','n q':'OANDA:NAS100USD','bitcoin':'BITSTAMP:BTCUSD','btc':'BITSTAMP:BTCUSD','oil':'TVC:USOIL','dollar':'TVC:DXY'
+  };
+  const $ = id => document.getElementById(id);
+  const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+  const store = {
+    get(k, d){ try{ const v = localStorage.getItem('jarvis.'+k); return v ? JSON.parse(v) : d; }catch{ return d; } },
+    set(k, v){ try{ localStorage.setItem('jarvis.'+k, JSON.stringify(v)); }catch{} }
+  };
+  const pad = n => String(n).padStart(2,'0');
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  // Public state the visuals read every frame
+  const JV = window.JV = { level: 0, mode: 'idle', speaking: false, awake: false };
+  const setMode = (m, label) => {
+    JV.mode = m;
+    document.body.dataset.mode = m;
+    set('stateLabel', label || ({idle:'STANDING BY', listening:'LISTENING', thinking:'PROCESSING', sleep:'SLEEP — SAY “SPIKEY, WAKE UP”'})[m]);
+  };
+
+  // ---------- clock / systems ----------
+  const started = Date.now();
+  function tick(){
+    const d = new Date();
+    set('clock', d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}).replace(/\s?[AP]M/i,''));
+    set('ampm', d.getHours() < 12 ? 'AM' : 'PM');
+    set('seconds', pad(d.getSeconds()));
+    set('date', d.toLocaleDateString([], {weekday:'long', month:'long', day:'numeric'}));
+    const s = Math.floor((Date.now()-started)/1000);
+    set('uptime', `${pad(Math.floor(s/3600))}:${pad(Math.floor(s/60)%60)}:${pad(s%60)}`);
+    set('net', navigator.onLine ? 'ONLINE' : 'OFFLINE');
+  }
+  function etNow(){
+    const p = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,weekday:'short',hour:'2-digit',minute:'2-digit'}).formatToParts(new Date());
+    const g = t => p.find(x => x.type === t).value;
+    return { day: g('weekday'), min: (parseInt(g('hour'))%24)*60 + parseInt(g('minute')) };
+  }
+  const SESSIONS = [
+    {id:'asia', name:'Asia', s:19*60, e:4*60},
+    {id:'london', name:'London', s:3*60, e:12*60},
+    {id:'ny', name:'New York', s:9*60+30, e:16*60}
+  ];
+  const fmtDur = m => `${Math.floor(m/60)}h ${pad(m%60)}m`;
+  function sessions(){
+    const box = $('sessions'); if (!box) return;
+    const {day, min} = etNow();
+    const weekend = day === 'Sat' || (day === 'Sun' && min < 18*60) || (day === 'Fri' && min >= 17*60);
+    box.innerHTML = SESSIONS.map(x => {
+      const len = (x.e - x.s + 1440) % 1440, into = (min - x.s + 1440) % 1440;
+      const live = !weekend && into < len;
+      const until = (x.s - min + 1440) % 1440;
+      return `<div class="sess ${live?'live':''}"><div class="sn"><span>${x.name}</span><span>${live ? 'LIVE · ' + fmtDur(len-into) + ' left' : weekend ? 'CLOSED' : 'opens in ' + fmtDur(until)}</span></div><div class="sb"><i style="width:${live ? (into/len*100).toFixed(1) : 0}%"></i></div></div>`;
+    }).join('');
+    const fut = weekend ? 'FUTURES CLOSED' : (min >= 17*60 && min < 18*60) ? 'FUTURES · DAILY BREAK' : 'FUTURES OPEN';
+    set('futures', fut);
+    document.body.dataset.market = weekend ? 'closed' : 'open';
+  }
+  tick(); setInterval(tick, 1000); sessions(); setInterval(sessions, 20000);
+
+  let battery = null;
+  if (navigator.getBattery) navigator.getBattery().then(b => {
+    battery = b;
+    const upd = () => {
+      const pct = Math.round(b.level*100);
+      set('batt', `${pct}%`); set('battState', b.charging ? 'CHARGING' : 'ON BATTERY');
+      const bar = $('battBar'); if (bar) bar.style.width = pct + '%';
+      document.body.dataset.lowbatt = (pct < 20 && !b.charging) ? '1' : '0';
+    };
+    upd(); b.addEventListener('levelchange', upd); b.addEventListener('chargingchange', upd);
+  });
+
+  // ---------- weather ----------
+  const WMO = {0:'Clear skies',1:'Mostly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Freezing fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',
+    61:'Light rain',63:'Rain',65:'Heavy rain',66:'Freezing rain',67:'Freezing rain',71:'Light snow',73:'Snow',75:'Heavy snow',80:'Rain showers',81:'Heavy showers',
+    82:'Violent showers',95:'Thunderstorms',96:'Thunderstorms with hail',99:'Severe thunderstorms'};
+  let weather = null;
+  async function loadWeather(){
+    try{
+      const u = `https://api.open-meteo.com/v1/forecast?latitude=${CONFIG.lat}&longitude=${CONFIG.lon}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m&hourly=temperature_2m,precipitation_probability&forecast_hours=10&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=1`;
+      const j = await (await fetch(u)).json();
+      weather = {
+        temp: Math.round(j.current.temperature_2m), feels: Math.round(j.current.apparent_temperature),
+        cond: WMO[j.current.weather_code] || 'Conditions unknown', wind: Math.round(j.current.wind_speed_10m),
+        hum: j.current.relative_humidity_2m,
+        hi: Math.round(j.daily.temperature_2m_max[0]), lo: Math.round(j.daily.temperature_2m_min[0]),
+        rain: j.daily.precipitation_probability_max[0] ?? 0
+      };
+      set('temp', weather.temp + '°'); set('cond', weather.cond); set('feels', weather.feels + '°');
+      set('hilo', `${weather.hi}° / ${weather.lo}°`); set('wind', `${weather.wind} mph`);
+      set('rain', weather.rain + '%'); set('hum', weather.hum + '%');
+      const hr = $('hourly');
+      if (hr && j.hourly){
+        const temps = j.hourly.temperature_2m.slice(0,10), mn = Math.min(...temps), mx = Math.max(...temps);
+        hr.innerHTML = temps.map((tv,i) => {
+          const h = new Date(j.hourly.time[i]).getHours(), lab = i === 0 ? 'NOW' : ((h%12)||12) + (h<12?'a':'p');
+          const pct = mx === mn ? 50 : 20 + 80*(tv-mn)/(mx-mn);
+          return `<div class="hr"><span class="ht">${Math.round(tv)}°</span><i style="height:${pct}%"></i><span class="hl">${lab}</span><span class="hp">${j.hourly.precipitation_probability[i] ?? 0}%</span></div>`;
+        }).join('');
+      }
+    }catch(e){ set('cond', 'Weather feed offline'); }
+  }
+  loadWeather(); setInterval(loadWeather, 15*60*1000);
+
+  // ---------- tasks ----------
+  let tasks = store.get('tasks', []);
+  function renderTasks(){
+    const ol = $('tasks'); if (!ol) return;
+    ol.innerHTML = '';
+    set('taskCount', String(tasks.length).padStart(2,'0'));
+    if (!tasks.length){ const li = document.createElement('li'); li.className='empty'; li.textContent='No open objectives'; ol.appendChild(li); return; }
+    tasks.forEach((t,i) => { const li = document.createElement('li'); li.innerHTML = `<b>${pad(i+1)}</b><span>${esc(t)}</span>`; ol.appendChild(li); });
+  }
+  const saveTasks = () => { store.set('tasks', tasks); renderTasks(); };
+  renderTasks();
+
+  // ---------- sound: short chime when it wakes ----------
+  let actx = null;
+  function audioCtx(){ if (!actx) try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} if (actx && actx.state === 'suspended') actx.resume(); return actx; }
+  function chime(up = true){
+    const c = audioCtx(); if (!c) return;
+    const t = c.currentTime, o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(up ? 660 : 880, t); o.frequency.exponentialRampToValueAtTime(up ? 1320 : 440, t + .12);
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.18, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + .22);
+    o.connect(g).connect(c.destination); o.start(t); o.stop(t + .25);
+  }
+
+  // ---------- mic diagnostics (?debug=1) ----------
+  const DEBUG = new URLSearchParams(location.search).has('debug');
+  const SELFTEST = new URLSearchParams(location.search).has('selftest');
+  const D = JV.diag = {ev:{}, gum:'pending', track:'—', trackState:'—', devices:[], perm:'—', peak:0, lastText:'—', lastErr:'—', log:[]};
+  const bump = (k, extra) => { D.ev[k] = (D.ev[k] || 0) + 1; D.log.push(new Date().toLocaleTimeString([], {hour12:false}) + ' ' + k + (extra ? ' ' + extra : '')); if (D.log.length > 14) D.log.shift(); };
+  if (navigator.permissions) navigator.permissions.query({name:'microphone'}).then(p => { D.perm = p.state; p.onchange = () => D.perm = p.state; }).catch(() => D.perm = 'n/a');
+  let peakWin = 0;
+  setInterval(() => { D.peak = peakWin; peakWin = 0; }, 3000);
+  if (DEBUG){
+    const box = document.createElement('pre'); box.id = 'diag';
+    box.style.cssText = 'position:fixed;left:12px;top:60px;z-index:50;background:rgba(0,0,0,.92);color:#9dffb8;font:13px/1.35 Consolas,monospace;padding:12px 14px;border:1px solid #3dff8f;max-width:560px;white-space:pre-wrap;pointer-events:none';
+    document.body.appendChild(box);
+    setInterval(() => {
+      const bar = n => '█'.repeat(Math.round(n*20)).padEnd(20,'·');
+      box.textContent =
+        `SPIKEY MIC DIAGNOSTICS\n` +
+        `page: ${location.protocol}  secure=${isSecureContext}  online=${navigator.onLine}\n` +
+        `mic permission: ${D.perm}   getUserMedia: ${D.gum}\n` +
+        `mic in use: ${D.track}  [${D.trackState}]\n` +
+        `inputs: ${D.devices.join(' | ') || '—'}\n` +
+        `level now  ${bar(JV.level)}\n` +
+        `peak (3s)  ${bar(D.peak)} ${D.peak.toFixed(2)}\n` +
+        `speech engine: ${Object.entries(D.ev).map(([k,v]) => k + '=' + v).join('  ')}\n` +
+        `last heard: ${D.lastText}\nlast error: ${D.lastErr}\n` +
+        `--- events ---\n${D.log.join('\n')}`;
+    }, 300);
+  }
+
+  let mutedSaid = false;
+  // ---------- mic level for the visuals ----------
+  async function startMeter(){
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}});
+      D.gum = 'ok';
+      const tr = stream.getAudioTracks()[0];
+      if (tr){
+        const shortName = (tr.label || 'microphone').replace(/^Default - /, '').replace(/\s*\(.*\)$/, '');
+        const warn = () => { micStatus(false, 'MIC MUTED IN WINDOWS — PRESS THE MIC-MUTE KEY OR UNMUTE IN SOUND SETTINGS'); if (!mutedSaid){ mutedSaid = true; say('Heads up. Your microphone is muted in Windows, so I can’t hear you.'); } };
+        const ok = () => { mutedSaid = false; micStatus(true, 'SAY “SPIKEY…” · OR PRESS SPACE · ' + shortName.toUpperCase()); };
+        D.track = tr.label || '(unnamed)'; D.trackState = tr.readyState + (tr.muted ? ', MUTED' : '');
+        tr.onmute = () => { D.trackState = 'MUTED'; warn(); };
+        tr.onunmute = () => { D.trackState = 'live'; ok(); };
+        tr.onended = () => D.trackState = 'ended';
+        if (tr.muted) setTimeout(warn, 4000);
+      }
+      navigator.mediaDevices.enumerateDevices().then(ds => { D.devices = ds.filter(d => d.kind === 'audioinput').map(d => (d.deviceId === 'default' ? '*' : '') + (d.label || '?')); });
+      const c = audioCtx(); const src = c.createMediaStreamSource(stream);
+      const an = c.createAnalyser(); an.fftSize = 512; src.connect(an);
+      const buf = new Uint8Array(an.fftSize);
+      JV.analyser = an;
+      const loop = () => {
+        an.getByteTimeDomainData(buf);
+        let sum = 0; for (let i = 0; i < buf.length; i++){ const v = (buf[i]-128)/128; sum += v*v; }
+        const rms = Math.min(1, Math.sqrt(sum/buf.length) * 4.5);
+        if (!JV.speaking) JV.level += (rms - JV.level) * 0.35;
+        if (rms > peakWin) peakWin = rms;
+        requestAnimationFrame(loop);
+      };
+      loop();
+    }catch(e){ D.gum = 'FAILED: ' + e.name + ' ' + (e.message || ''); }
+  }
+
+  // ---------- voice out ----------
+  let voice = null;
+  function pickVoice(){
+    const vs = speechSynthesis.getVoices();
+    const prefs = [/Ryan.*Natural/i, /Thomas.*Natural/i, /Guy.*Natural/i, /Christopher.*Natural/i, /en-GB.*(Male|George|Ryan)/i, /George/i, /en-GB/i, /en-US/i];
+    for (const p of prefs){ const v = vs.find(v => p.test(v.name + ' ' + v.lang)); if (v) { voice = v; return; } }
+    voice = vs[0] || null;
+  }
+  if ('speechSynthesis' in window){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+
+  let talkTimer = null;
+  function say(text){
+    set('reply', text);
+    return new Promise(res => {
+      if (!('speechSynthesis' in window)) return res();
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      if (voice) u.voice = voice;
+      u.rate = 1.02; u.pitch = 0.95;
+      u.onstart = () => {
+        JV.speaking = true; document.body.dataset.speaking = '1';
+        talkTimer = setInterval(() => { JV.level = 0.35 + Math.random()*0.55; }, 70);
+      };
+      const done = () => { JV.speaking = false; document.body.dataset.speaking = '0'; clearInterval(talkTimer); JV.level = 0; res(); };
+      u.onend = done; u.onerror = done;
+      speechSynthesis.speak(u);
+    });
+  }
+
+  // ---------- holo popup ----------
+  let holoTimer = null;
+  function holo(title, html, ms = 9000){
+    const h = $('holo'); if (!h) return;
+    set('holoTitle', title); $('holoBody').innerHTML = html;
+    h.classList.add('show');
+    clearTimeout(holoTimer); holoTimer = setTimeout(() => h.classList.remove('show'), ms);
+  }
+  if ($('holo')) $('holo').addEventListener('click', () => $('holo').classList.remove('show'));
+  const row = (a, b) => `<div class="hrow"><span>${a}</span><span>${b}</span></div>`;
+
+  // ---------- skills ----------
+  const greetingWord = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
+  const timeSentence = () => `It's ${new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}.`;
+  const weatherSentence = () => weather
+    ? `It's ${weather.temp} degrees in ${CONFIG.city} and ${weather.cond.toLowerCase()}, with a high of ${weather.hi} and a ${weather.rain} percent chance of rain.`
+    : `I haven't been able to reach the weather feed yet.`;
+  const taskSentence = () => !tasks.length ? 'You have no open objectives.'
+    : tasks.length === 1 ? `You have one open objective: ${tasks[0]}.`
+    : `You have ${tasks.length} open objectives. First up: ${tasks[0]}.`;
+  const powerSentence = () => !battery ? '' : `Battery at ${Math.round(battery.level*100)} percent${battery.charging ? ', and charging' : ''}.`;
+
+  const listOut = arr => arr.length === 1 ? arr[0] : arr.slice(0, -1).join(', ') + ', and ' + arr[arr.length - 1];
+  function todoSentences(){
+    const out = [];
+    const cole = window.JV_coleTodos ? window.JV_coleTodos() : null;
+    if (cole){
+      if (cole.length) out.push(`On your Cole to-do list: ${listOut(cole.slice(0, 5))}${cole.length > 5 ? `, plus ${cole.length - 5} more` : ''}.`);
+      else out.push('Your Cole to-do list is clear.');
+    }
+    if (tasks.length) out.push(`Your objectives here: ${listOut(tasks.slice(0, 5))}${tasks.length > 5 ? `, plus ${tasks.length - 5} more` : ''}.`);
+    else if (!cole) out.push('No open objectives.');
+    return out;
+  }
+  // the opening announcement when Spikey launches: no weather, no pop-up box
+  function opening(greet){
+    const pnl = window.JV_pnlBreakdown ? window.JV_pnlBreakdown() : null;
+    return say([greet, timeSentence(), pnl || '', ...todoSentences(), "Let's make shit happen."].filter(Boolean).join(' '));
+  }
+
+  function briefing(opening, boot){
+    holo('DAILY BRIEFING',
+      row('Time', new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})) +
+      (weather && !boot ? row('Weather', `${weather.temp}° · ${esc(weather.cond)}`) : '') +
+      row('Objectives', tasks.length) +
+      (battery ? row('Power', Math.round(battery.level*100) + '%') : ''), 12000);
+    const pnl = window.JV_pnlSentence && window.JV_pnlSentence();
+    // opening greeting (dock/launch): no weather, always ends with the sign-off
+    if (boot) return say([opening, timeSentence(), pnl || '', taskSentence(), "Let's make shit happen."].filter(Boolean).join(' '));
+    return say([opening || `${greetingWord()}, ${CONFIG.name}.`, timeSentence(), weatherSentence(), pnl || '', taskSentence()].filter(Boolean).join(' '));
+  }
+
+  const HELP = [
+    ['briefing', 'Full rundown'], ["what's my P&L", 'Weekly P&L'], ['what time is it', 'Time'], ['weather', CONFIG.city + ' conditions'],
+    ['add task …', 'New objective'], ['read my tasks', 'List objectives'], ['complete task 2', 'Remove one'],
+    ['clear tasks', 'Remove all'], ['show US30 / NAS100 / gold', 'Switch chart'], ['open chart · close chart', 'Big chart'], ['open YouTube · Gmail · TradingView', 'Launch site'],
+    ['play Lose Yourself · pause · skip', 'Spotify'], ['open YouTube and find…', 'Ask anything'], ['log to Cole: …', 'Save to Cole'],
+    ['go to sleep · wake up', 'Standby']
+  ];
+  const numWords = {one:1,two:2,to:2,too:2,three:3,four:4,for:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,first:1,second:2,third:3,fourth:4,fifth:5};
+
+  async function handle(raw){
+    const clean = raw.replace(/[.,!?]/g,'').trim();
+    const text = clean.toLowerCase();
+    if (!text) return;
+    set('reply', '');
+    const brainOn = !!(window.JV_brain && window.JV_brain.hasKey());
+    const brief = text.split(/\s+/).length <= 5;          // short phrases = quick commands; longer ones go to the brain
+    const toBrain = async () => {
+      try{ return say(await window.JV_brain.ask(raw)); }
+      catch(e){ return say(e.message || 'Something went wrong.'); }
+    };
+
+    if (JV.mode === 'sleep'){
+      if (/wake up|come online|i'?m back|online/.test(text)){ setMode('idle'); return briefing(`Welcome back, ${CONFIG.name}.`); }
+      return;
+    }
+    if (/^(go to sleep|stand ?by|sleep mode|power down|that'?s all)$/.test(text) || (!brainOn && /go to sleep|stand ?by|sleep mode|power down|that'?s all/.test(text))){ await say(`Standing by, ${CONFIG.address}.`); return setMode('sleep'); }
+    if (/^(brief|briefing|status report|rundown|catch me up|good (morning|afternoon|evening))/.test(text) || (!brainOn && /brief|status report|rundown|catch me up/.test(text))) return briefing();
+    if (/^(what('?s| is) the )?time( is it)?( now)?$|^what time is it( now)?$/.test(text) || (!brainOn && /\btime\b/.test(text))) return say(timeSentence());
+    if (/^(what('?s| is) )?(the |today'?s )?date$|^what day is (it|today)$/.test(text) || (!brainOn && /\bdate\b|what day/.test(text)))
+      return say(`Today is ${new Date().toLocaleDateString([], {weekday:'long', month:'long', day:'numeric'})}.`);
+    if ((brief || !brainOn) && /weather|temperature|outside|rain/.test(text) && !/tomorrow|week|weekend| in [a-z]/.test(text)){
+      if (weather) holo('ATMOSPHERICS', `<div class="hbig">${weather.temp}°</div>` + row('Conditions', esc(weather.cond)) + row('Feels like', weather.feels + '°') + row('High / Low', `${weather.hi}° / ${weather.lo}°`) + row('Rain chance', weather.rain + '%'));
+      return say(weatherSentence());
+    }
+    let m;
+    if ((m = clean.match(/^(?:add (?:a )?(?:task|objective|to ?do)(?: to)?|remind me to|new task)\s+(.+)/i))){
+      const t = m[1].charAt(0).toUpperCase() + m[1].slice(1);
+      tasks.push(t); saveTasks();
+      return say(`Added: ${t}.`);
+    }
+    if ((m = text.match(/^(?:complete|finish|remove|delete|done with|check off)\s+(?:task|objective|number)?\s*(\d+|one|two|to|too|three|four|for|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth)$/))){
+      const n = /\d/.test(m[1]) ? parseInt(m[1]) : numWords[m[1]];
+      return say(completeTask(n));
+    }
+    if (/^clear (all )?(my )?(tasks|objectives|list)$/.test(text)){ tasks = []; saveTasks(); return say('Objectives cleared.'); }
+    if (/^(read |what('?s| is) on )?(my )?(tasks|objectives|to ?dos?|agenda|list)$|^what('?s| is) on my (list|agenda|to ?do list)$/.test(text) || (!brainOn && /(tasks|objectives|to ?do|agenda|my list)/.test(text))){
+      if (tasks.length) holo('OBJECTIVES', tasks.map((t,i) => row(esc(t), pad(i+1))).join(''));
+      return say(todoSentences().join(' '));
+    }
+    // --- weekly P&L ---
+    if ((brief || !brainOn) && /\bp\s?(&|and|n)\s?l\b|\bpnl\b|profit|how('?s| is| am i)( my)? (week|trading|doing)|my week/.test(text)){
+      const p = (window.JV_pnlBreakdown && window.JV_pnlBreakdown()) || (window.JV_pnlSentence && window.JV_pnlSentence());
+      return say(p || "Sign in to Cole on the P and L panel so I can see your trades.");
+    }
+    // --- charts inside Spikey ---
+    if (/^(close|hide|dismiss|minimi[sz]e) (the )?(big )?chart$/.test(text)){ if (window.JV_bigChart) window.JV_bigChart(false); return say('Chart closed.'); }
+    const symKey = Object.keys(SYMBOLS).find(k => new RegExp('\\b' + k.replace(/[&]/g,'\\$&') + '\\b').test(text));
+    if (brief && symKey && /(chart|show|switch|pull up|change|put up|load)/.test(text) && !/tradingview|trading view/.test(text)){
+      const sym = SYMBOLS[symKey];
+      store.set('symbol', sym); if (bus) bus.postMessage({type:'symbol', symbol:sym});
+      if (window.JV_setSymbol) window.JV_setSymbol(sym);
+      return say(`${symKey.toUpperCase()} is up.`);
+    }
+    if (/^(show|open|pull up|bring up|expand)( me)?( the| my)? (big |full )?chart$/.test(text)){
+      if (window.JV_bigChart) window.JV_bigChart(true);
+      return say('Chart is up.');
+    }
+    // --- music: fast path straight to Spotify ---
+    if ((m = clean.match(/^(?:play|put on|throw on)\s+(.+?)(?:\s+on spotify)?$/i)) && window.JV_spotify && window.JV_spotify.connected() && !/youtube/i.test(clean)){
+      try{ return say((await window.JV_spotify.play(m[1], /\bplaylist\b/i.test(m[1]) ? 'playlist' : 'track')).message); }catch(e){ if (!brainOn) return say("Spotify didn't respond. " + (e.message || '')); }
+    }
+    if (window.JV_spotify && window.JV_spotify.connected()){
+      const sp = {pause:'pause', 'pause music':'pause', 'pause the music':'pause', stop:'pause', 'stop the music':'pause', resume:'resume', 'resume music':'resume', skip:'next', next:'next', 'next song':'next', 'skip this':'next', 'skip song':'next', 'previous song':'previous', 'go back':'previous', 'last song':'previous'}[text];
+      if (sp){ try{ await window.JV_spotify.control(sp); return; }catch(e){ return say("Spotify didn't respond."); } }
+    }
+    // --- websites: exact names open instantly ---
+    if ((m = text.match(/^(?:open|launch|pull up|bring up|go to)\s+(?:the |my )?(.+)$/))){
+      const target = m[1].trim();
+      const key = Object.keys(CONFIG.sites).find(k => target === k);
+      if (key){ const u = CONFIG.sites[key]; if (/^spotify:/.test(u)) location.href = u; else window.open(u, '_blank'); return say(`Opening ${key}.`); }
+    }
+    if (/^(help|what can you do|commands)$/.test(text) || (!brainOn && /help|what can you do|commands/.test(text))){
+      holo('CAPABILITIES', HELP.map(([a,b]) => row('“' + a + '”', b)).join(''), 14000);
+      return say(brainOn ? 'Here are the quick ones. Anything else, just ask me.' : 'Here is what I can do so far.');
+    }
+    if (/^(thanks|thank you|thank you spikey)$/.test(text)) return say(`Always, ${CONFIG.address}.`);
+    if (/^(who are you|what('?s| is) your name)$/.test(text)) return say(`I'm Spikey. Sledge B's own assistant. By outcasts, for outcasts.`);
+    if (/^(hello|hey|hi|yo)$/.test(text)) return say(`${greetingWord()}, ${CONFIG.name}.`);
+
+    // --- everything else: ask the brain ---
+    if (brainOn) return toBrain();
+    if (/battery|power|systems|diagnostic/.test(text)) return say(`${powerSentence() || 'Power telemetry unavailable.'} Network ${navigator.onLine ? 'online' : 'offline'}.`);
+    return say(`I need my Claude key to answer that. Add it in Setup, top right.`);
+  }
+  function completeTask(n){
+    if (!tasks[n-1]) return `There's no objective number ${n}.`;
+    const [t] = tasks.splice(n-1, 1); saveTasks();
+    return `Marked complete: ${t}. ${tasks.length} remaining.`;
+  }
+  window.JV_tasks = {
+    list: () => tasks.slice(),
+    add: t => { tasks.push(String(t).charAt(0).toUpperCase() + String(t).slice(1)); saveTasks(); },
+    complete: n => completeTask(n)
+  };
+
+  let comms = store.get('comms', []);
+  function renderComms(){
+    const box = $('comms'); if (!box) return;
+    box.innerHTML = comms.length ? comms.slice(-6).reverse().map(c =>
+      `<li><span class="ct">${c.t}</span><span class="cq">${esc(c.q)}</span><span class="ca">${esc(c.a)}</span></li>`).join('')
+      : '<li class="empty">No transmissions yet</li>';
+  }
+  function logComms(q, a){
+    comms.push({t: new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}), q, a});
+    comms = comms.slice(-20); store.set('comms', comms); renderComms();
+  }
+  renderComms();
+
+  async function run(cmd){
+    JV.awake = false; awakeUntil = 0;
+    if (JV.mode !== 'sleep') setMode('thinking');
+    const before = Date.now();
+    await handle(cmd);
+    logComms(cmd, ($('reply') || {}).textContent || '');
+    if (JV.mode !== 'sleep') setMode('idle');
+  }
+
+  // ---------- typed commands ----------
+  const cmdBox = $('cmd');
+  if (cmdBox) cmdBox.addEventListener('keydown', e => {
+    if (e.key === 'Enter'){ const v = e.target.value; e.target.value = ''; set('transcript', v); run(v.replace(WAKE, '').replace(/^[\s,]+/, '')); }
+  });
+
+  // ---------- listening ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, awakeUntil = 0, recOn = false;
+  const micStatus = (on, label) => { const d = $('micDot'); if (d) d.className = 'dot ' + (on ? 'on' : 'off'); set('micLabel', label); };
+
+  function wake(){
+    if (JV.mode === 'sleep') return;
+    awakeUntil = Date.now() + 8000; JV.awake = true;
+    setMode('listening'); chime(true);
+    setTimeout(() => { if (Date.now() >= awakeUntil && JV.mode === 'listening'){ JV.awake = false; setMode('idle'); } }, 8200);
+  }
+
+  function startRec(){
+    if (!SR){ micStatus(false, 'VOICE INPUT UNSUPPORTED — USE EDGE OR CHROME'); return; }
+    rec = new SR(); rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US'; rec.maxAlternatives = 3;
+    rec.onstart = () => { bump('start'); recOn = true; if (!(JV.diag && /MUTED/.test(JV.diag.trackState))) micStatus(true, 'SAY “SPIKEY…” · OR PRESS SPACE'); };
+    rec.onaudiostart = () => bump('audio');
+    rec.onsoundstart = () => bump('sound');
+    rec.onspeechstart = () => bump('speech');
+    rec.onnomatch = () => bump('nomatch');
+    rec.onerror = e => {
+      bump('err:' + e.error); D.lastErr = e.error + (e.message ? ' ' + e.message : '');
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed'){ recOn = false; micStatus(false, 'MIC BLOCKED — ALLOW MICROPHONE ACCESS'); rec = null; }
+      else if (e.error === 'network'){ micStatus(false, 'SPEECH SERVICE UNREACHABLE — CHECK INTERNET'); }
+      else if (e.error === 'audio-capture'){ micStatus(false, 'NO MICROPHONE FOUND'); }
+    };
+    rec.onend = () => { bump('end'); recOn = false; if (rec) setTimeout(() => { try{ rec.start(); }catch{} }, 250); };
+    rec.onresult = e => {
+      bump('result');
+      try{ D.lastText = e.results[e.results.length-1][0].transcript; }catch{}
+      if (JV.speaking && !SELFTEST) return;
+      for (let i = e.resultIndex; i < e.results.length; i++){
+        const r = e.results[i];
+        // check every alternative the recognizer offers for the wake word
+        let text = r[0].transcript, hit = null;
+        for (let a = 0; a < r.length; a++){ const mm = r[a].transcript.match(WAKE); if (mm){ hit = mm; text = r[a].transcript; break; } }
+        const awakeNow = Date.now() < awakeUntil;
+        const tr = $('transcript');
+        if (tr){ tr.textContent = text.trim(); tr.dataset.live = (hit || awakeNow) ? '1' : '0'; }
+        if (hit && !r.isFinal && JV.mode === 'idle'){ awakeUntil = Date.now() + 8000; JV.awake = true; setMode('listening'); }
+        if (!r.isFinal) continue;
+        if (hit){
+          const after = text.slice(hit.index + hit[0].length).replace(/^[\s,.!?]+/, '');
+          if (JV.mode === 'sleep'){ if (after) run(after); }
+          else if (after) run(after);
+          else wake();
+        } else if (awakeNow){
+          run(text);
+        }
+      }
+    };
+    try{ rec.start(); }catch{}
+  }
+
+  // push-to-talk: Space (when not typing) or click the orb
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' && document.activeElement !== cmdBox){ e.preventDefault(); wake(); }
+  });
+  const orb = $('orb'); if (orb) orb.addEventListener('click', wake);
+
+  // ---------- boot ----------
+  async function boot(){
+    setMode('idle', 'SYSTEMS ONLINE');
+    await new Promise(r => setTimeout(r, 1500));
+    await Promise.race([window.JV_coleReady || Promise.resolve(), new Promise(r => setTimeout(r, 6000))]);   // let Cole's numbers load first
+    const p = opening(`${greetingWord()}, ${CONFIG.name}. Docking complete. All systems online.`);
+    setTimeout(() => {
+      if ('speechSynthesis' in window && !JV.speaking && !speechSynthesis.speaking){ const a = $('activate'); if (a) a.classList.add('show'); }
+    }, 2500);
+    await p;
+    if (JV.mode !== 'sleep') setMode('idle');
+  }
+  const act = $('activate');
+  if (act) act.addEventListener('click', () => {
+    act.classList.remove('show'); audioCtx();
+    opening(`${greetingWord()}, ${CONFIG.name}. All systems online.`);
+    if (!recOn) startRec();
+  });
+  document.addEventListener('click', () => audioCtx(), {once:true});
+
+  let lastSym = null;
+  const applySym = sym => { if (sym && sym !== lastSym && window.JV_setSymbol){ lastSym = sym; window.JV_setSymbol(sym); } };
+  if (bus) bus.onmessage = e => { if (e.data && e.data.type === 'symbol') applySym(e.data.symbol); };
+  window.addEventListener('storage', e => {
+    if (e.key === 'jarvis.tasks'){ tasks = store.get('tasks', []); renderTasks(); }
+    if (e.key === 'jarvis.symbol') applySym(store.get('symbol', null));
+  });
+  if (SIDE){
+    setMode('idle', 'MARKETS LINK ACTIVE');
+    // The side screen may run in its own Edge window/profile, so it listens for chart commands itself.
+    if (SR){
+      const r = new SR(); r.continuous = true; r.interimResults = false; r.lang = 'en-US'; r.maxAlternatives = 3;
+      r.onresult = e => {
+        for (let i = e.resultIndex; i < e.results.length; i++){
+          for (let a = 0; a < e.results[i].length; a++){
+            const t = e.results[i][a].transcript.toLowerCase();
+            if (!WAKE.test(t) || !/(chart|show|switch|pull up|change|put up|load)/.test(t)) continue;
+            const k = Object.keys(SYMBOLS).find(k => t.includes(k));
+            if (k){ applySym(SYMBOLS[k]); set('stateLabel', 'CHART · ' + k.toUpperCase()); setTimeout(() => set('stateLabel','MARKETS LINK ACTIVE'), 4000); return; }
+          }
+        }
+      };
+      r.onend = () => setTimeout(() => { try{ r.start(); }catch{} }, 300);
+      try{ r.start(); }catch{}
+    }
+    return;
+  }
+  startRec();
+  startMeter();
+  boot();
+  if (SELFTEST){
+    const phrase = () => { const u = new SpeechSynthesisUtterance('Testing, one two three. Spikey, what time is it?'); u.volume = 1; speechSynthesis.speak(u); bump('selftest-say'); };
+    setTimeout(phrase, 16000); setInterval(phrase, 25000);
+  }
+})();
+
+</script>
+<script>
+/* ===== Setup panel: Claude key, Spotify, Cole ===== */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  const $ = id => document.getElementById(id);
+  const css = document.createElement('style');
+  css.textContent = `
+  #setupBtn{cursor:pointer;border:1px solid var(--line);padding:6px 10px;color:var(--txt)}
+  #setupBtn:hover{border-color:var(--a)}
+  #setupBtn.needs{color:#fff;background:var(--a);border-color:var(--a)}
+  #setupPanel{background:var(--bg) !important;box-shadow:0 20px 80px rgba(0,0,0,.7);position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:26;width:min(620px,94vw);max-height:90vh;overflow:auto;display:none}
+  #setupPanel.show{display:block}
+  #setupPanel section{border-top:1px solid var(--line);padding:14px 0}
+  #setupPanel section:first-of-type{border-top:0}
+  #setupPanel h4{font:600 11px var(--f-mono);letter-spacing:.24em;color:var(--a);margin-bottom:8px;display:flex;justify-content:space-between}
+  #setupPanel h4 em{font-style:normal;color:var(--mute)} #setupPanel h4 em.ok{color:var(--good)}
+  #setupPanel p{font-size:14px;line-height:1.45;color:var(--txt);margin-bottom:8px}
+  #setupPanel ol{margin:0 0 8px 18px;font-size:13.5px;line-height:1.6}
+  #setupPanel input{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--hi);font:400 13px var(--f-mono);padding:9px 11px;outline:none;margin-bottom:8px}
+  #setupPanel input:focus{border-color:var(--a)}
+  #setupPanel .btns{display:flex;gap:8px;flex-wrap:wrap}
+  #setupPanel button{padding:8px 12px;font:600 10.5px var(--f-mono);letter-spacing:.18em;border:1px solid var(--line);background:transparent;color:var(--txt);cursor:pointer}
+  #setupPanel button.go{background:var(--a);border-color:var(--a);color:#fff}
+  #setupPanel code{font:400 12px var(--f-mono);color:var(--a2);word-break:break-all}
+  #nowPlaying{display:none;gap:12px;align-items:center;background:rgba(255,255,255,.03);border-radius:12px;padding:10px}
+  #nowPlaying img{width:64px;height:64px;border-radius:6px;object-fit:cover;flex:none;background:#222}
+  #nowPlaying .np{display:flex;flex-direction:column;gap:2px;min-width:0}
+  #nowPlaying .np b{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--hi)}
+  #nowPlaying .np span{font-size:12.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #nowPlaying .npc{display:flex;gap:6px;margin-top:6px}
+  #nowPlaying .npc button{background:transparent;border:1px solid var(--line);color:var(--hi);width:34px;height:28px;cursor:pointer;font-size:13px}
+  #nowPlaying .npc button:hover{border-color:var(--a)}`;
+  document.head.appendChild(css);
+
+  // "SETUP" button in the top bar
+  const btn = document.createElement('span');
+  btn.id = 'setupBtn'; btn.className = 'chip'; btn.textContent = '⚙ SETUP';
+  const top = document.querySelector('.top'); const state = $('stateLabel');
+  if (top && state) top.insertBefore(btn, state);
+
+  // now-playing card goes under the Spotify embed
+  const emb = $('spotifyMain');
+  if (emb && !$('nowPlaying')){ const np = document.createElement('div'); np.id = 'nowPlaying'; emb.after(np); }
+
+  const panel = document.createElement('section');
+  panel.id = 'setupPanel'; panel.className = 'panel';
+  document.body.appendChild(panel);
+
+  function draw(){
+    const brain = window.JV_brain, sp = window.JV_spotify;
+    const hasKey = brain && brain.hasKey(), spOn = sp && sp.connected(), coleOn = window.JV_coleSignedIn && window.JV_coleSignedIn();
+    btn.classList.toggle('needs', !hasKey);
+    panel.innerHTML = `
+      <h3>Setup <em style="cursor:pointer" id="setupClose">CLOSE ✕</em></h3>
+      <section>
+        <h4>1 · Claude brain <em class="${hasKey ? 'ok' : ''}">${hasKey ? 'ON ✓' : 'OFF'}</em></h4>
+        <p>Lets Spikey answer any question, search the web, and do things for you. Paste your key from <code>console.anthropic.com</code> → API keys. It's saved only in this window.</p>
+        <input id="setKey" type="password" autocomplete="off" placeholder="${hasKey ? 'saved · paste a new one to replace' : 'sk-ant-…'}">
+        <div class="btns"><button class="go" id="saveKey">SAVE KEY</button>${hasKey ? '<button id="delKey">REMOVE</button>' : ''}</div>
+      </section>
+      <section>
+        <h4>2 · Spotify (Premium) <em class="${spOn ? 'ok' : ''}">${spOn ? 'CONNECTED ✓' : 'NOT CONNECTED'}</em></h4>
+        ${spOn ? `<p>Say “Spikey, play …”, “pause”, “skip”.</p><div class="btns"><button id="spOut">DISCONNECT</button></div>` : `
+        <ol>
+          <li>Open <code>developer.spotify.com/dashboard</code> and log in → <b>Create app</b>.</li>
+          <li>Any name and description. <b>Redirect URI</b>: <code id="spRedir">${sp ? sp.redirect : ''}</code> <button id="copyRedir" style="padding:3px 8px">COPY</button></li>
+          <li>Tick <b>Web API</b>, save, then copy the app's <b>Client ID</b> here.</li>
+        </ol>
+        <input id="setSp" autocomplete="off" placeholder="${sp && sp.hasClientId() ? 'client ID saved' : 'Spotify Client ID'}">
+        <div class="btns"><button class="go" id="spGo">CONNECT SPOTIFY</button></div>`}
+      </section>
+      <section>
+        <h4>3 · Cole <em class="${coleOn ? 'ok' : ''}">${coleOn ? 'SIGNED IN ✓' : 'NOT SIGNED IN'}</em></h4>
+        <p>${coleOn ? 'Spikey reads your trades and to-dos, and “log to Cole …” saves into the right sections.' : 'Sign in with your Cole email and password.'}</p>
+        ${coleOn ? '' : '<div class="btns"><button class="go" id="coleGoSetup">SIGN IN TO COLE</button></div>'}
+      </section>`;
+    $('setupClose').onclick = () => panel.classList.remove('show');
+    $('saveKey').onclick = () => { const v = $('setKey').value.trim(); if (v){ brain.setKey(v); draw(); } };
+    if ($('delKey')) $('delKey').onclick = () => { brain.setKey(''); draw(); };
+    if ($('spOut')) $('spOut').onclick = () => { sp.disconnect(); draw(); location.reload(); };
+    if ($('copyRedir')) $('copyRedir').onclick = () => navigator.clipboard.writeText(sp.redirect).then(() => $('copyRedir').textContent = 'COPIED');
+    if ($('spGo')) $('spGo').onclick = () => { const v = $('setSp').value.trim(); if (v) sp.setClientId(v); if (!sp.hasClientId()) return; sp.login(); };
+    if ($('coleGoSetup')) $('coleGoSetup').onclick = () => { panel.classList.remove('show'); const s = $('coleState'); if (s) s.click(); };
+    panel.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => e.stopPropagation()));   // typing here isn't push-to-talk
+  }
+  btn.onclick = () => { draw(); panel.classList.add('show'); };
+  setTimeout(draw, 1500);
+  // first run: open setup automatically if the brain has no key
+  setTimeout(() => { if (window.JV_brain && !window.JV_brain.hasKey()){ draw(); panel.classList.add('show'); } }, 9000);
+})();
+
+</script>
+</body>
+</html>

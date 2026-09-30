@@ -154,6 +154,30 @@ nav.tabs button[aria-current="page"]{color:var(--ice);background:var(--slab)}
 
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 @media (max-width:380px){.stats{grid-template-columns:repeat(2,1fr)}}
+/* ===== links hub + desktop layout ===== */
+#hub{display:flex;flex-direction:column;gap:12px}
+.hubgrp h5{margin:0 0 6px;font-family:var(--f-mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.links{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.lnk{display:flex;align-items:center;gap:8px;padding:9px 9px;background:var(--slab2);border:1px solid transparent;border-radius:10px;color:var(--ink);text-decoration:none;font-size:13.5px;font-weight:600;min-width:0}
+.lnk:hover{border-color:var(--ice-d)}
+.lnk .ic{flex:none;width:24px;height:24px;border-radius:6px;display:grid;place-items:center;font-size:12px;font-weight:800;color:#fff}
+.lnk .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lnk.edit{justify-content:space-between}
+.kbd{font-family:var(--f-mono);font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+@media (max-width:1023px){body:not([data-tab="today"]) #hub{display:none} #hub{margin-top:22px} .deskonly{display:none!important}}
+@media (min-width:1024px){
+  .wrap{max-width:1240px;margin-left:220px;margin-right:auto;padding-inline:32px;padding-block:28px 40px;display:grid;grid-template-columns:minmax(0,1fr) 340px;grid-template-areas:"head head" "mission mission" "main hub" "sync hub";column-gap:32px;align-items:start}
+  header.top{grid-area:head} .mission{grid-area:mission} #view{grid-area:main;min-width:0} #sync{grid-area:sync} #hub{grid-area:hub;position:sticky;top:24px;max-height:calc(100vh - 48px);overflow:auto;padding-right:4px}
+  .brand{font-size:32px}
+  nav.tabs{top:0;bottom:0;right:auto;width:200px;border-top:0;border-right:1px solid var(--line);padding:28px 12px;background:var(--coal);backdrop-filter:none}
+  nav.tabs .in{display:flex;flex-direction:column;gap:4px;max-width:none}
+  nav.tabs button{flex-direction:row;justify-content:flex-start;gap:12px;padding:11px 12px;font-size:14px}
+  .stats{grid-template-columns:repeat(4,1fr)}
+  .list{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .revgrid{grid-template-columns:repeat(3,1fr)}
+}
+body[data-tab="today"] #hub .deskonly:first-child{display:none}
+@media (min-width:1024px) and (max-width:1279px){.wrap{grid-template-columns:minmax(0,1fr) 280px;column-gap:24px}}
 [hidden]{display:none!important}
 img{max-width:100%}
 html{background:#0f1113}
@@ -173,6 +197,7 @@ body{-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none}
   </header>
   <p class="mission">The family is the reason to follow the rules, not the reason to force a trade.</p>
   <main id="view"></main>
+  <aside id="hub" aria-label="Links hub"></aside>
   <div class="sync" id="sync">Offline mode · saved on this device</div>
 </div>
 
@@ -271,6 +296,43 @@ function disciplineCard(){
     <div>${tradeRow}${rows}</div>
     ${ui.habEdit?`<div class="row" style="flex-wrap:nowrap"><input type="text" id="habName" placeholder="e.g. Phone in bed, skipping the shake"><button class="btn sm" data-act="addHab">Add</button></div>`:""}
   </div>`;
+}
+const LINK_GROUPS=["Trading","Content","Money","Tools"];
+const LINK_COLORS={Trading:"#e5484d",Content:"#b54ae5",Money:"#3fa56b",Tools:"#4a7de5"};
+let links={list:[
+  {id:"tv",name:"TradingView",url:"https://www.tradingview.com/chart/",group:"Trading"},
+  {id:"tsx",name:"TopstepX",url:"https://www.topstepx.com/login",group:"Trading"},
+  {id:"ts",name:"Topstep",url:"https://app.topsteptrader.com/login",group:"Trading"},
+  {id:"af",name:"Alpha Futures",url:"https://alpha-futures.com/",group:"Trading"},
+  {id:"ig",name:"Instagram",url:"https://www.instagram.com/",group:"Content"},
+  {id:"mbs",name:"Meta Suite",url:"https://business.facebook.com/latest/",group:"Content"},
+  {id:"cc",name:"CapCut",url:"https://www.capcut.com/",group:"Content"},
+  {id:"era",name:"Era",url:"https://era.app/",group:"Money"},
+  {id:"boa",name:"BofA",url:"https://www.bankofamerica.com/",group:"Money"},
+  {id:"disc",name:"Discover",url:"https://www.discover.com/",group:"Money"},
+  {id:"claude",name:"Claude",url:"https://claude.ai/",group:"Tools"},
+  {id:"gmail",name:"Gmail",url:"https://mail.google.com/",group:"Tools"},
+  {id:"gcal",name:"Calendar",url:"https://calendar.google.com/",group:"Tools"},
+  {id:"gh",name:"GitHub",url:"https://github.com/nick1400-ux/cole",group:"Tools"}]};
+function loadLinks(){try{const x=JSON.parse(localStorage.getItem("cole.links")||"null");if(x&&Array.isArray(x.list))links=x}catch(e){}}
+let linkPending=Promise.resolve();
+function saveLinks(){try{localStorage.setItem("cole.links",JSON.stringify(links))}catch(e){}
+  if(!db)return;const body=JSON.parse(JSON.stringify(links));linkPending=linkPending.then(()=>db.doc("meta/links").set(body)).catch(e=>setSync("Couldn't save links ("+(e.code||"error")+")."))}
+function vHub(){
+  const groups=[...LINK_GROUPS,...new Set(links.list.map(l=>l.group).filter(g=>!LINK_GROUPS.includes(g)))];
+  const safe=u=>/^https?:\/\//i.test(u)?u:"https://"+u;
+  return `<div class="deskonly">${nowCard()}</div>
+  <div class="row" style="justify-content:space-between;align-items:center"><div class="eyebrow" style="margin:0">Links hub</div><button class="btn ghost sm" data-hub="edit">${ui.linkEdit?"Done":"Edit"}</button></div>
+  ${groups.map(g=>{const ls=links.list.filter(l=>l.group===g);if(!ls.length)return"";const c=LINK_COLORS[g]||"#8d949b";
+    return `<div class="hubgrp"><h5>${esc(g)}</h5><div class="links">${ls.map(l=>ui.linkEdit
+      ?`<div class="lnk edit"><span class="nm">${esc(l.name)}</span><button class="x" data-dellink="${l.id}" aria-label="Remove ${esc(l.name)}">×</button></div>`
+      :`<a class="lnk" href="${esc(safe(l.url))}" target="_blank" rel="noopener"><span class="ic" style="background:${c}">${esc(l.name[0]||"?")}</span><span class="nm">${esc(l.name)}</span></a>`).join("")}</div></div>`}).join("")}
+  ${ui.linkEdit?`<div class="card gap"><strong style="font-size:14px">Add a link</strong>
+    <input type="text" id="lnName" placeholder="Name (e.g. Velocity schedule)">
+    <input type="text" id="lnUrl" placeholder="Link (e.g. velocityclimbing.com)">
+    <div class="chips">${[...LINK_GROUPS].map(g=>`<button class="chip" data-lgroup="${g}" aria-pressed="${(ui.lgroup||"Tools")===g}">${g}</button>`).join("")}</div>
+    <button class="btn sm" data-hub="add">Add link</button></div>`:""}
+  <div class="deskonly muted" style="font-size:12px">Keys: <span class="kbd">1</span>–<span class="kbd">5</span> switch tabs · <span class="kbd">T</span> talk to Cole · <span class="kbd">R</span> weekly review</div>`;
 }
 const FEELS=["Calm","Focused","Confident","Anxious","Frustrated","Tired","Need to make it back","Bored"];
 
@@ -626,13 +688,13 @@ function vReview(){
   <button class="btn ghost" data-act="closeReview" style="margin-top:12px">Back</button>`;
 }
 async function coachReview(){
-  if(!sample){ui.revErr="The AI read runs in Claude. The numbers above are your full review.";return render()}
+  if(!sample){ui.revErr="Add your Claude key in Talk to Cole to get Cole's read.";return render()}
   ui.revBusy=true;ui.revErr="";render();
   try{
     const r=reviewData();
     const out=await sample(`You are Cole, Nick's accountability coach. Nick is a Mercedes tech who day trades YM/MYM futures with rules (max 2 trades/day, no revenge, no oversizing, no FOMO, trade only 9:30-10:30), is on a lean bulk, and wants to support his family through trading. Be direct and specific, no fluff, no trade picks or financial advice. Here is his week as JSON: ${JSON.stringify(r)}. Write 3 short parts: "The pattern:" (1-2 sentences), "What it cost:" (1-2 sentences using the numbers), "One fix for next week:" (one concrete action). If data is thin, say what to log more of.`,{modelTier:"default"});
     ui.revText=out.text;
-  }catch(e){ui.revErr=e&&e.code==="not_granted"?"Allow Cole to ask Claude, then try again.":"Couldn't get a read right now. Try again in a minute."}
+  }catch(e){ui.revErr=aiErr(e,"Couldn't get a read right now. Try again in a minute.")}
   ui.revBusy=false;render();
 }
 
@@ -678,6 +740,10 @@ function vDump(){
     <textarea id="dumpText" placeholder="Went into the open feeling rushed, took a short at 42,100 off my level, stopped out, wanted to jump right back in but walked away. Had a Chipotle bowl for lunch, 15 bucks. Idea: film a reel about walking away from revenge trades. Need to call the venue for Saturday."></textarea>
     <button class="btn" data-act="sortDump" ${ui.dumpBusy?"disabled":""}>${ui.dumpBusy?"Sorting…":"Sort it"}</button>
     ${ui.dumpErr?`<div class="muted" style="color:var(--warn)">${esc(ui.dumpErr)}</div>`:""}
+    <details class="muted" ${aiKey()?"":"open"} style="margin-top:4px"><summary style="cursor:pointer">${aiKey()?"AI sorting is on · change Claude key":"Turn on AI sorting (Claude key)"}</summary>
+      <div class="gap" style="margin-top:8px"><input id="aiKeyInput" type="password" autocomplete="off" placeholder="sk-ant-…" style="width:100%">
+      <div class="row"><button class="btn sm" data-act="saveAiKey">Save key</button>${aiKey()?`<button class="btn ghost sm" data-act="clearAiKey">Remove key</button>`:""}</div>
+      <div class="muted" style="font-size:12px">Saved only on this device. Get one at console.anthropic.com → API keys.</div></div></details>
     <button class="btn ghost" data-act="closeDump">Back</button>
   </div>${res}`;
 }
@@ -696,10 +762,12 @@ function vMind(){
   <div class="eyebrow">Journal</div>
   ${recent.length?`<div class="gap">${recent.map(j=>`<div class="entry"><div class="when">${j.k} · ${SECTORS[j.tag]||"Journal"}</div>${esc(j.text)}</div>`).join("")}</div>`:`<div class="muted">Your entries show up here, newest first.</div>`}`;
 }
+function aiErr(e,fallback){const c=e&&e.code;
+  return c==="bad_key"?"Your Claude key didn't work. Check it in the box below.":c==="not_granted"?"Add your Claude key below so Cole can sort.":c==="rate_limited"?"Claude is busy. Give it a minute and try again.":c==="offline"?"No internet right now. Try again when you're back online.":fallback}
 async function sortDump(){
   const txt=(document.getElementById("dumpText")||{}).value?.trim();
   if(!txt){ui.dumpErr="Say or type something first.";return render()}
-  if(!sample){ui.dumpRaw=txt;ui.dump={journal:[{tag:"journal",text:txt}],meals:[],ideas:[],tasks:[],spend:[],flags:[],slips:[],coach:"Saved to your journal. Log food in Fuel and slips with the + Slip button."};return render()}
+  if(!sample){ui.dumpErr="Cole needs your Claude key to sort this into trades, food, ideas and to-dos. Paste it in the box below, then tap Sort it again.";return render()}
   ui.dumpBusy=true;ui.dumpErr="";ui.dumpRaw=txt;render();
   try{
     const out=await sample.json(`You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades YM/MYM futures (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
@@ -724,7 +792,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
       flags:A(out.flags).filter(f=>["gym","reel","family"].includes(f)),
       slips:A(out.slips).map(x=>({h:habits.list.find(h=>h.name.toLowerCase()===String(x.habit||"").toLowerCase()),count:Math.max(1,Math.round(+x.count||1)),trigger:String(x.trigger||"")})).filter(x=>x.h).map(x=>({id:x.h.id,name:x.h.name,count:x.count,trigger:x.trigger})),
       coach:String(out.coach||"")};
-  }catch(e){ui.dumpErr=e&&e.code==="not_granted"?"Allow Cole to ask Claude, then try again.":e&&e.code==="rate_limited"?"Cole is busy. Give it a minute and try again.":"Couldn't sort that one. Try again."}
+  }catch(e){ui.dumpErr=aiErr(e,"Couldn't sort that one. Try again.")}
   ui.dumpBusy=false;render();
 }
 function saveDump(){
@@ -748,6 +816,8 @@ function render(){
   document.getElementById("view").innerHTML=VIEWS[tab]();
   for(const id in keep){const el=document.getElementById(id);if(el){if(el.type==="checkbox")el.checked=keep[id];else el.value=keep[id]}}
   document.querySelector(".mission").hidden=tab!=="trade";
+  document.body.dataset.tab=tab;
+  {const hub=document.getElementById("hub");const a=document.activeElement;if(!(a&&hub.contains(a)&&a.tagName==="INPUT"))hub.innerHTML=vHub();}
   document.querySelectorAll("nav.tabs button").forEach(b=>b.setAttribute("aria-current",b.dataset.tab===tab?"page":"false"));
 }
 function go(t){tab=t;window.scrollTo(0,0);render()}
@@ -806,6 +876,8 @@ document.getElementById("view").addEventListener("click",async e=>{
   if(a==="openDump"){ui.back=tab;go("dump")}
   if(a==="closeDump"){go(ui.back&&ui.back!=="dump"?ui.back:"today")}
   if(a==="sortDump") sortDump();
+  if(a==="saveAiKey"){const v=(document.getElementById("aiKeyInput")||{}).value?.trim();if(v){setAiKey(v);ui.dumpErr="";render()}}
+  if(a==="clearAiKey"){setAiKey("");render()}
   if(a==="clearDump"){ui.dump=null;render()}
   if(a==="saveDump") saveDump();
   if(a==="estimate") estimate();
@@ -814,6 +886,29 @@ document.getElementById("view").addEventListener("click",async e=>{
 });
 
 let sample=null;
+/* ===== AI connection: Claude API, key saved only on this device ===== */
+const AI_KEY_LS="cole.claudeKey", AI_MODEL="claude-sonnet-5-5";
+function aiKey(){try{return localStorage.getItem(AI_KEY_LS)||""}catch(e){return ""}}
+async function claudeText(prompt){
+  const key=aiKey(); if(!key) throw {code:"not_granted"};
+  let r;
+  try{
+    r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model:AI_MODEL,max_tokens:2000,messages:[{role:"user",content:prompt}]})});
+  }catch(e){throw {code:"offline"}}
+  if(r.status===401||r.status===403) throw {code:"bad_key"};
+  if(r.status===429||r.status===529) throw {code:"rate_limited"};
+  if(!r.ok) throw {code:"error",status:r.status};
+  const j=await r.json();
+  return (j.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("").trim();
+}
+function makeSample(){
+  const f=async p=>({text:await claudeText(p)});
+  f.json=async p=>{const t=await claudeText(p+"\n\nReply with the JSON object only. No prose, no code fences.");const m=t.match(/\{[\s\S]*\}/);return JSON.parse(m?m[0]:t)};
+  return f;
+}
+function setAiKey(k){try{k?localStorage.setItem(AI_KEY_LS,k):localStorage.removeItem(AI_KEY_LS)}catch(e){} sample=aiKey()?makeSample():null}
+sample=aiKey()?makeSample():null;
 async function estimate(){
   const txt=(document.getElementById("mealText")||{}).value?.trim(); if(!txt){ui.estErr="Type what you ate first.";return render()}
   if(!sample){const n=txt.match(/(\d+)\s*(?:kcal|cal)/i),pr=txt.match(/(\d+)\s*(?:g\s*)?(?:protein|p\b)/i);ui.est={items:[{name:txt.replace(/\d+\s*(kcal|cal|g protein|protein|p\b)/gi,"").trim().slice(0,80)||txt,kcal:n?+n[1]:0,p:pr?+pr[1]:0,c:0,f:0}]};ui.estErr=n||pr?"":"Tip: add numbers, e.g. \"Chipotle bowl 900 cal 75 protein\"";return render()}
@@ -823,12 +918,28 @@ async function estimate(){
     const items=(out&&out.items||[]).map(i=>({name:String(i.name||txt).slice(0,80),kcal:Math.round(+i.kcal||0),p:Math.round(+i.p||0),c:Math.round(+i.c||0),f:Math.round(+i.f||0)}));
     if(!items.length) throw {message:"No estimate came back."};
     ui.est={items};
-  }catch(e){ui.estErr=e&&e.code==="not_granted"?"Allow Cole to ask Claude to use estimates.":"Couldn't estimate that one. Try rewording, or use a favorite."}
+  }catch(e){ui.estErr=aiErr(e,"Couldn't estimate that one. Try rewording, or use a favorite.")}
   ui.estBusy=false;render();
 }
 
 /* ---------- boot ---------- */
-loadLocal(); loadPipe(); loadHabits(); render();
+document.getElementById("hub").addEventListener("click",e=>{
+  const t=e.target.closest("button");if(!t)return;
+  if(t.dataset.hub==="edit"){ui.linkEdit=!ui.linkEdit;return render()}
+  if(t.dataset.lgroup){ui.lgroup=t.dataset.lgroup;return render()}
+  if(t.dataset.dellink){links.list=links.list.filter(l=>l.id!==t.dataset.dellink);saveLinks();return render()}
+  if(t.dataset.hub==="add"){const n=document.getElementById("lnName"),u=document.getElementById("lnUrl");const name=n.value.trim(),url=u.value.trim();if(!name||!url)return;
+    links.list.push({id:"l"+Date.now(),name:name.slice(0,40),url:url.slice(0,500),group:ui.lgroup||"Tools"});n.value="";u.value="";saveLinks();document.activeElement.blur();render()}
+  if(t.classList.contains("nowcard"))go("plan");
+});
+document.addEventListener("keydown",e=>{
+  const a=document.activeElement;if(e.metaKey||e.ctrlKey||e.altKey||(a&&["INPUT","TEXTAREA","SELECT"].includes(a.tagName)))return;
+  const map={"1":"today","2":"trade","3":"fuel","4":"plan","5":"mind"};
+  if(map[e.key]){go(map[e.key]);e.preventDefault()}
+  else if(e.key==="t"||e.key==="T"){ui.back=tab;go("dump");setTimeout(()=>{const d=document.getElementById("dumpText");d&&d.focus()},50);e.preventDefault()}
+  else if(e.key==="r"||e.key==="R"){ui.back=tab;go("review");e.preventDefault()}
+});
+loadLocal(); loadPipe(); loadHabits(); loadLinks(); render();
 setInterval(()=>{ if(lossLeft()>0 || laptopLeft()>0 || keyOf(new Date())!==TODAY || new Date().getSeconds()===0) { if(!document.activeElement||!["INPUT","TEXTAREA"].includes(document.activeElement.tagName)) render() } },1000);
 const SB_URL="https://ntuzsyfzgfgxkmyqniqz.supabase.co", SB_KEY="sb_publishable_RxVn21A1NCVsMlCh03cvHw_vnBxCP2q";
 let sb=null, uid=null; const lastWrite={};
@@ -863,7 +974,8 @@ async function afterLogin(user){
   setSync("● Synced · same on every device");
   // first sign-in on this device: push anything saved locally
   const had=await sb.from("cole_docs").select("path").limit(1);
-  if(!had.error&&(!had.data||!had.data.length)){for(const k in days) save(k); savePipe(); saveHabits();}
+  if(!had.error&&(!had.data||!had.data.length)){for(const k in days) save(k); savePipe(); saveHabits(); saveLinks();}
+  db.doc("meta/links").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.list)){links=x;try{localStorage.setItem("cole.links",JSON.stringify(links))}catch(e){}render()}}else saveLinks()},()=>{});
   db.doc("meta/habits").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.list)){habits=x;try{localStorage.setItem("cole.habits",JSON.stringify(habits))}catch(e){}const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()}}else saveHabits()},()=>{});
   db.doc("meta/pipeline").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.reels)){pipe=x;try{localStorage.setItem("cole.pipe",JSON.stringify(pipe))}catch(e){}const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()}}},()=>{});
   db.collection("days").onSnapshot(snap=>{
