@@ -852,7 +852,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     disconnect(){ ['access','refresh','expires'].forEach(k => put(k, '')); },
     async play(query, type = 'track'){
       type = ['track','artist','album','playlist'].includes(type) ? type : 'track';
-      const res = await api('/search?' + new URLSearchParams({q:query, type, limit:'1', market:'from_token'}));
+      const res = await api('/search?' + new URLSearchParams({q:query, type, limit:'1'}));
       const item = res && res[type + 's'] && res[type + 's'].items && res[type + 's'].items.filter(Boolean)[0];
       if (!item) return {ok:false, message:`Couldn't find ${query} on Spotify.`};
       const d = await device();
