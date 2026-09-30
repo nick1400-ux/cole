@@ -814,8 +814,23 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     const r = await fetch('https://api.spotify.com/v1' + path, {...opts, headers:{Authorization:'Bearer ' + t, 'Content-Type':'application/json', ...(opts.headers || {})}});
     if (r.status === 204) return null;
     const txt = await r.text(); const j = txt ? JSON.parse(txt) : null;
-    if (!r.ok){ const m = (j && j.error && (j.error.reason || j.error.message)) || r.status; const err = new Error(String(m)); err.status = r.status; throw err; }
+    if (!r.ok){
+      const reason = (j && j.error && j.error.reason) || '', msg = (j && j.error && j.error.message) || '';
+      const err = new Error(explain(r.status, reason, msg)); err.status = r.status; err.raw = `${r.status} ${reason} ${msg} [${(opts.method || 'GET')} ${path.split('?')[0]}]`;
+      put('lastError', new Date().toLocaleTimeString() + ' · ' + err.raw);
+      throw err;
+    }
     return j;
+  }
+  // plain-English version of Spotify's error, with the fix
+  function explain(status, reason, msg){
+    const m = (reason + ' ' + msg).toLowerCase();
+    if (/premium/.test(m)) return 'Spotify says this account is not Premium. Spikey is logged into a Spotify account without Premium; disconnect in Setup and log in with your Premium account.';
+    if (/not be registered|user may not|developer\.spotify/.test(m)) return 'Spotify blocked it because your account is not added to the Spikey app. On developer.spotify.com, open your app, User Management, and add the email of your Spotify account.';
+    if (/restriction|no active device|not found/.test(m) || status === 404) return 'Spotify has no active player. Open the Spotify app, play anything for a second, then ask again.';
+    if (status === 401) return 'The Spotify login expired. Reconnect Spotify in Setup.';
+    if (status === 403) return 'Spotify refused: ' + (msg || reason || 'forbidden') + '.';
+    return 'Spotify error ' + status + ': ' + (msg || reason);
   }
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   async function device(){
@@ -859,6 +874,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
       setTimeout(nowPlaying, 1200);
       return {ok:true};
     },
+    lastError: () => get('lastError'),
     async current(){
       const j = await api('/me/player/currently-playing');
       if (!j || !j.item) return null;
@@ -879,7 +895,19 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     box.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => window.JV_spotify.control(b.dataset.sp).catch(() => {}));
   }
   window.JV_spotifyRefresh = nowPlaying;
-  finishLogin().then(() => { nowPlaying(); setInterval(nowPlaying, 10000); });
+  finishLogin().then(() => {
+    nowPlaying(); setInterval(nowPlaying, 10000);
+    const t = new URLSearchParams(location.search).get('sptest');
+    if (t) setTimeout(async () => {
+      const show = x => { const r = $('reply'); if (r) r.textContent = 'SPOTIFY TEST: ' + x; };
+      try{
+        const {devices} = await api('/me/player/devices');
+        show('devices: ' + (devices.map(d => d.name + '/' + d.type + (d.is_active ? '*' : '') + (d.is_restricted ? ' RESTRICTED' : '')).join(', ') || 'none') + ' … playing');
+        const res = await window.JV_spotify.play(t, 'artist');
+        show((res.ok ? 'OK ' : 'NO ') + res.message + ' · devices: ' + devices.map(d => d.name).join(', '));
+      }catch(e){ show('FAILED ' + (e.raw || e.message)); }
+    }, 7000);
+  });
 })();
 
 </script>
@@ -949,7 +977,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
         case 'get_todos': return JSON.stringify({cole:(window.JV_coleTodos && window.JV_coleTodos()) || 'Cole not signed in', spikey:window.JV_tasks.list()});
       }
       return 'Unknown tool.';
-    }catch(e){ return 'Failed: ' + (e.message || e); }
+    }catch(e){ return 'Failed. Tell Nick exactly this: ' + (e.message || e); }
   }
 
   function system(){
