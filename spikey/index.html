@@ -899,14 +899,16 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     nowPlaying(); setInterval(nowPlaying, 10000);
     const t = new URLSearchParams(location.search).get('sptest');
     if (t) setTimeout(async () => {
-      const show = x => { const r = $('reply'); if (r) r.textContent = 'SPOTIFY TEST: ' + x; };
+      const box = document.createElement('pre'); box.style.cssText = 'position:fixed;left:12px;top:60px;z-index:60;background:#000;color:#9dffb8;font:14px/1.4 Consolas,monospace;padding:12px;border:1px solid #3dff8f;max-width:640px;white-space:pre-wrap';
+      document.body.appendChild(box);
+      const show = x => { box.textContent += 'SPOTIFY TEST: ' + x + '\n'; };
       try{
         const {devices} = await api('/me/player/devices');
         show('devices: ' + (devices.map(d => d.name + '/' + d.type + (d.is_active ? '*' : '') + (d.is_restricted ? ' RESTRICTED' : '')).join(', ') || 'none') + ' … playing');
         const res = await window.JV_spotify.play(t, 'artist');
         show((res.ok ? 'OK ' : 'NO ') + res.message + ' · devices: ' + devices.map(d => d.name).join(', '));
       }catch(e){ show('FAILED ' + (e.raw || e.message)); }
-    }, 7000);
+    }, 12000);
   });
 })();
 
