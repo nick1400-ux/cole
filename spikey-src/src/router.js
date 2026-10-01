@@ -46,6 +46,8 @@ Rules:
 - Mixed requests: split into several commands, e.g. "kill the journal and pull up backtesting" → ["close journal","let's start backtesting"].
 - If one part is a catalog command and another part needs judgement, use {"intent":"brain"}.
 - Never invent things he didn't ask for.
+- Hiding vs ending: "get rid of / close / hide / put away the backtest screen" = "minimize backtest" (the session keeps running). Use "end backtest", "clear the objective list", "cancel all timers" or "delete the … slide" ONLY when he clearly says end/finish/stop the session, clear/delete everything, etc.
+- Money questions: "how much did I make", "am I up or down", "how's my week" = "what's my P&L" (spoken answer); "show/pull up my trading" = "open my trading".
 
 Examples:
 "bring my bread back up" → {"intent":"commands","commands":["open my finances"]}
