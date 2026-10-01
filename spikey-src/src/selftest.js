@@ -2,6 +2,10 @@
 (() => {
   const Q = new URLSearchParams(location.search);
   if (!Q.get('selftest') || Q.get('screen') === 'side') return;
+  // run once per manual launch only: never again after a self-update reload, and drop the flag from the address
+  let silent = false; try{ silent = sessionStorage.getItem('spikey.silentReload') === '1'; }catch{}
+  try{ Q.delete('selftest'); history.replaceState(null, '', location.pathname + (Q.toString() ? '?' + Q : '')); }catch{}
+  if (silent) return;
   const $ = id => document.getElementById(id);
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const reply = () => (($('reply') || {}).textContent || '').trim();
