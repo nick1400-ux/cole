@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.R.V.I.S. · Mark VII</title>
+<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@200;300;500;700&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root{ --c:#5ce1ff; --c2:#9ff3ff; --amber:#ffb547; --dim:rgba(92,225,255,.28); --faint:rgba(92,225,255,.07); --txt:#d9f7ff; --mute:#5f8894; --bg:#010407; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--txt);font-family:'Oxanium',sans-serif}
+  canvas#fx{position:fixed;inset:0;width:100%;height:100%}
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;background:
+    radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.75) 100%),
+    repeating-linear-gradient(0deg,rgba(255,255,255,.018) 0 1px,transparent 1px 3px)}
+  .mono{font-family:'JetBrains Mono',monospace}
+  .k{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.28em;color:var(--mute);text-transform:uppercase}
+
+  /* corner modules — bracket frames, no boxes */
+  .mod{position:fixed;padding:18px 22px;min-width:300px}
+  .mod::before,.mod::after{content:"";position:absolute;width:22px;height:22px;border:1px solid var(--c);opacity:.8}
+  .mod::before{top:0;left:0;border-right:0;border-bottom:0}
+  .mod::after{bottom:0;right:0;border-left:0;border-top:0}
+  .tl{top:4vh;left:3vw}.tr{top:4vh;right:3vw;text-align:right}.bl{bottom:15vh;left:3vw}.br{bottom:15vh;right:3vw;width:min(380px,26vw)}
+  .tr::before{left:auto;right:0;border-left:1px solid var(--c);border-right:0}
+  .tr::after{right:auto;left:0;border-right:1px solid var(--c);border-left:0}
+  .clock{font-weight:200;font-size:clamp(56px,7vw,112px);line-height:.9;letter-spacing:-.02em;color:#effcff;text-shadow:0 0 30px rgba(92,225,255,.35)}
+  .clock small{font-size:.28em;font-weight:500;letter-spacing:.1em;color:var(--c);margin-left:.4em;vertical-align:.9em}
+  .clock sup{font-size:.22em;font-weight:300;color:var(--mute);font-family:'JetBrains Mono';vertical-align:1.4em}
+  .date{margin-top:10px;font-size:17px;letter-spacing:.18em;text-transform:uppercase;color:var(--c2)}
+  .temp{font-weight:200;font-size:clamp(56px,6vw,96px);line-height:.9;color:#effcff;text-shadow:0 0 30px rgba(92,225,255,.35)}
+  .cond{margin-top:8px;font-size:17px;letter-spacing:.14em;text-transform:uppercase;color:var(--c2)}
+  .grid{display:grid;grid-template-columns:auto auto;gap:6px 26px;margin-top:14px}
+  .grid div{display:flex;flex-direction:column;gap:2px}
+  .tr .grid{justify-content:end;text-align:right}
+  .v{font-family:'JetBrains Mono';font-size:15px;color:#effcff}
+  .meter{height:2px;background:var(--faint);margin-top:8px;width:220px}
+  .meter i{display:block;height:100%;background:var(--c);box-shadow:0 0 12px var(--c);transition:width .6s}
+  body[data-lowbatt="1"] .meter i{background:#ff5470;box-shadow:0 0 12px #ff5470}
+  ol#tasks{list-style:none;margin-top:12px;max-height:30vh;overflow:auto}
+  ol#tasks li{display:flex;gap:14px;padding:8px 0;border-bottom:1px solid var(--faint);font-size:16px;letter-spacing:.03em}
+  ol#tasks li b{font-family:'JetBrains Mono';font-weight:300;font-size:12px;color:var(--c);padding-top:3px}
+  ol#tasks li.empty{color:var(--mute)}
+
+  /* status strip top-center */
+  .strip{position:fixed;top:4vh;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:14px}
+  .strip .line{width:12vw;height:1px;background:linear-gradient(90deg,transparent,var(--dim))}
+  .strip .line.r{background:linear-gradient(90deg,var(--dim),transparent)}
+  #stateLabel{font-family:'JetBrains Mono';font-size:12px;letter-spacing:.4em;color:var(--c);white-space:nowrap}
+  body[data-mode="listening"] #stateLabel{color:#fff;text-shadow:0 0 10px var(--c)}
+  body[data-speaking="1"] #stateLabel{color:var(--amber)}
+
+  /* centre readouts */
+  #orb{position:fixed;left:50%;top:44%;width:min(36vh,28vw);aspect-ratio:1;transform:translate(-50%,-50%);border-radius:50%;cursor:pointer}
+  .name{position:fixed;left:50%;top:44%;transform:translate(-50%,-50%);font-weight:300;letter-spacing:.9em;padding-left:.9em;font-size:13px;color:var(--c2);pointer-events:none;opacity:.85}
+  .talk{position:fixed;left:50%;bottom:13vh;transform:translateX(-50%);width:min(900px,60vw);text-align:center}
+  #transcript{font-family:'JetBrains Mono';font-size:15px;color:var(--mute);min-height:1.4em;letter-spacing:.04em}
+  #transcript[data-live="1"]{color:var(--c2)}
+  #transcript:not(:empty)::before{content:"› "}
+  #reply{margin-top:12px;font-size:clamp(20px,1.7vw,28px);font-weight:300;line-height:1.35;min-height:2.7em;color:#effcff}
+
+  /* command bar */
+  .bar{position:fixed;left:3vw;right:3vw;bottom:4vh;display:flex;align-items:center;gap:16px;border-top:1px solid var(--faint);padding-top:14px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--mute);flex:none}
+  .dot.on{background:#5dffb0;box-shadow:0 0 10px #5dffb0}.dot.off{background:#ff5470;box-shadow:0 0 10px #ff5470}
+  #micLabel{font-family:'JetBrains Mono';font-size:11px;letter-spacing:.24em;color:var(--mute);white-space:nowrap}
+  #cmd{flex:1;background:transparent;border:0;color:#effcff;font:300 17px 'Oxanium';letter-spacing:.06em;outline:none;text-align:right}
+  #cmd::placeholder{color:#35545c}
+
+  /* holo */
+  #holo{position:fixed;left:50%;top:44%;width:min(540px,80vw);padding:28px 32px;transform:translate(-50%,-50%) scale(.6);opacity:0;pointer-events:none;
+    transition:.5s cubic-bezier(.2,.9,.2,1);background:rgba(2,16,22,.78);backdrop-filter:blur(8px);border:1px solid var(--dim);
+    box-shadow:0 0 80px rgba(92,225,255,.18);z-index:5}
+  #holo.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+  #holo::before{content:"";position:absolute;left:0;top:0;height:1px;width:100%;background:linear-gradient(90deg,transparent,var(--c),transparent)}
+  #holoTitle{font-family:'JetBrains Mono';font-size:12px;letter-spacing:.4em;color:var(--c);margin-bottom:16px}
+  .hrow{display:flex;justify-content:space-between;gap:20px;padding:9px 0;border-bottom:1px solid var(--faint);font-size:18px}
+  .hrow span:last-child{font-family:'JetBrains Mono';font-size:14px;color:var(--c2)}
+  .hbig{font-weight:200;font-size:72px;line-height:1;margin-bottom:8px}
+  #activate{position:fixed;inset:0;display:none;place-items:center;background:rgba(0,0,0,.7);z-index:9;cursor:pointer;font-family:'JetBrains Mono';letter-spacing:.5em;color:var(--c)}
+  #activate.show{display:grid}
+</style>
+</head>
+<body data-mode="idle">
+<canvas id="fx"></canvas>
+
+<div class="strip"><span class="line"></span><span id="stateLabel">INITIALIZING</span><span class="line r"></span></div>
+
+<div class="mod tl">
+  <div class="k">Local time</div>
+  <div class="clock"><span id="clock">--:--</span><small id="ampm"></small><sup id="seconds"></sup></div>
+  <div class="date" id="date">—</div>
+</div>
+
+<div class="mod tr">
+  <div class="k">Atmospherics · Miami</div>
+  <div class="temp" id="temp">--°</div>
+  <div class="cond" id="cond">Acquiring</div>
+  <div class="grid">
+    <div><span class="k">Hi / Lo</span><span class="v" id="hilo">—</span></div>
+    <div><span class="k">Rain</span><span class="v" id="rain">—</span></div>
+    <div><span class="k">Wind</span><span class="v" id="wind">—</span></div>
+    <div><span class="k">Humidity</span><span class="v" id="hum">—</span></div>
+  </div>
+</div>
+
+<div class="mod bl">
+  <div class="k">Systems</div>
+  <div class="grid">
+    <div><span class="k">Power</span><span class="v" id="batt">—</span></div>
+    <div><span class="k">State</span><span class="v" id="battState">—</span></div>
+    <div><span class="k">Network</span><span class="v" id="net">—</span></div>
+    <div><span class="k">Session</span><span class="v" id="uptime">—</span></div>
+  </div>
+  <div class="meter"><i id="battBar" style="width:0"></i></div>
+</div>
+
+<div class="mod br">
+  <div class="k">Objectives · <span id="taskCount">00</span></div>
+  <ol id="tasks"></ol>
+</div>
+
+<div id="orb" title="Click or press Space to talk"></div>
+<div class="name">JARVIS</div>
+
+<div class="talk"><div id="transcript"></div><div id="reply"></div></div>
+
+<div id="holo"><div id="holoTitle"></div><div id="holoBody"></div></div>
+
+<div class="bar">
+  <span class="dot" id="micDot"></span><span id="micLabel">MIC OFFLINE</span>
+  <input id="cmd" placeholder="type a command ⏎" autocomplete="off">
+</div>
+<div id="activate">CLICK TO ACTIVATE</div>
+
+<script>
+/* ===== Mark VII visuals: voice-reactive particle sphere + rotating instrument rings ===== */
+(() => {
+  const cv = document.getElementById('fx'), ctx = cv.getContext('2d');
+  let W, H, DPR;
+  const resize = () => { DPR = Math.min(2, devicePixelRatio || 1); W = cv.width = innerWidth*DPR; H = cv.height = innerHeight*DPR; };
+  addEventListener('resize', resize); resize();
+
+  const N = 1100, pts = [];
+  const ga = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < N; i++){
+    const y = 1 - (i/(N-1))*2, r = Math.sqrt(1-y*y), th = ga*i;
+    pts.push({x:Math.cos(th)*r, y, z:Math.sin(th)*r, s:Math.random()*Math.PI*2});
+  }
+  let rot = 0, smooth = 0, t0 = performance.now();
+  const freq = new Uint8Array(256);
+
+  function frame(now){
+    const t = (now - t0)/1000;
+    const JV = window.JV || {level:0};
+    smooth += ((JV.level||0) - smooth) * 0.12;
+    const cx = W/2, cy = H*0.44, R = Math.min(H*0.125, W*0.095);
+    const listening = JV.mode === 'listening', speaking = JV.speaking, sleep = JV.mode === 'sleep';
+    const col = speaking ? [255,181,71] : listening ? [200,250,255] : [92,225,255];
+    ctx.clearRect(0,0,W,H);
+
+    // soft core glow
+    const g = ctx.createRadialGradient(cx,cy,0,cx,cy,R*2.2);
+    g.addColorStop(0, `rgba(${col},${sleep?.05:.20 + smooth*.25})`); g.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx,cy,R*2.2,0,Math.PI*2); ctx.fill();
+
+    // particle sphere
+    rot += 0.0025 + smooth*0.02;
+    const cr = Math.cos(rot), sr = Math.sin(rot), tilt = 0.35, ct = Math.cos(tilt), st = Math.sin(tilt);
+    for (const p of pts){
+      const wob = 1 + smooth*0.35*Math.sin(p.s + t*6 + p.y*4) + 0.02*Math.sin(t*1.3 + p.s);
+      let x = p.x*cr - p.z*sr, z = p.x*sr + p.z*cr, y = p.y;
+      const y2 = y*ct - z*st; z = y*st + z*ct; y = y2;
+      const persp = 1/(1.9 - z*0.6);
+      const px = cx + x*R*wob*persp*1.5, py = cy + y*R*wob*persp*1.5;
+      const a = (sleep ? .15 : .25 + (z+1)*.35) ;
+      ctx.fillStyle = `rgba(${col},${a})`;
+      const sz = (0.6 + (z+1)*0.9)*DPR;
+      ctx.fillRect(px, py, sz, sz);
+    }
+
+    // radial spectrum ring from the mic
+    if (JV.analyser && !sleep){
+      JV.analyser.getByteFrequencyData(freq);
+      const bins = 96, rr = R*1.75;
+      ctx.strokeStyle = `rgba(${col},.55)`; ctx.lineWidth = 2*DPR;
+      ctx.beginPath();
+      for (let i = 0; i < bins; i++){
+        const v = speaking ? smooth*Math.random() : freq[4 + i]/255;
+        const a = (i/bins)*Math.PI*2 - Math.PI/2, len = 4*DPR + v*R*0.35;
+        ctx.moveTo(cx + Math.cos(a)*rr, cy + Math.sin(a)*rr);
+        ctx.lineTo(cx + Math.cos(a)*(rr+len), cy + Math.sin(a)*(rr+len));
+      }
+      ctx.stroke();
+    }
+
+    // instrument rings
+    const ring = (r, w, dash, speed, alpha) => {
+      ctx.save(); ctx.translate(cx,cy); ctx.rotate(t*speed);
+      ctx.strokeStyle = `rgba(${col},${alpha})`; ctx.lineWidth = w*DPR; ctx.setLineDash(dash.map(d=>d*DPR));
+      ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke(); ctx.restore();
+    };
+    ring(R*1.55, 1, [2,6], .05, .35);
+    ring(R*2.05, 1.5, [140,30,20,30], -.08, .45);
+    ring(R*2.3, 1, [1,14], .03, .3);
+    // arc segments
+    ctx.save(); ctx.translate(cx,cy); ctx.rotate(-t*.12);
+    ctx.strokeStyle = `rgba(${col},.8)`; ctx.lineWidth = 3*DPR; ctx.setLineDash([]);
+    for (let k = 0; k < 3; k++){ ctx.beginPath(); ctx.arc(0,0,R*2.18,k*2.09,k*2.09+0.5); ctx.stroke(); }
+    ctx.restore();
+    // ticks
+    ctx.save(); ctx.translate(cx,cy); ctx.rotate(t*.02);
+    ctx.strokeStyle = `rgba(${col},.4)`; ctx.lineWidth = 1*DPR;
+    for (let i = 0; i < 120; i++){ const a = i/120*Math.PI*2, l = i%10 ? 5 : 12;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a)*R*2.45*1, Math.sin(a)*R*2.45); ctx.lineTo(Math.cos(a)*(R*2.45+l*DPR), Math.sin(a)*(R*2.45+l*DPR)); ctx.stroke(); }
+    ctx.restore();
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+<script>
+{{ENGINE}}
+</script>
+</body>
+</html>

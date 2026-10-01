@@ -1,0 +1,9 @@
+  body[data-theme="nightops"]{--red:#ff2d3d;
+    --r-top:181,123,255;--r-bot:140,110,255;--r-speak:255,45,61;--r-listen:61,255,143;--r-arc:255,45,61;--r-glow1:120,60,220;--r-glow2:255,30,50;--r-ring:181,123,255}
+  body[data-theme="nightops"] .mark b{color:var(--red)}
+  body[data-theme="nightops"] .panel > h3::before{content:"";width:5px;height:5px;background:var(--red);margin-right:9px;box-shadow:0 0 8px var(--red)}
+  body[data-theme="nightops"] .panel > h3{justify-content:flex-start}
+  body[data-theme="nightops"] .panel > h3 em{margin-left:auto}
+  body[data-theme="nightops"][data-speaking="1"] #stateLabel{background:var(--red);border-color:var(--red);color:#fff}
+  body[data-theme="nightops"] ol#tasks li b{color:var(--red)}
+  body[data-theme="nightops"] .hr:first-child i{background:linear-gradient(to top,transparent,var(--red))}

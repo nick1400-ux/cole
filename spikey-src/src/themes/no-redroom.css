@@ -1,0 +1,13 @@
+  body[data-theme="nightops"]{--red:#ff2233; --a:#ff2233; --a2:#b57bff; --line:rgba(255,34,51,.22); --panel:rgba(24,10,14,.72); --mute:#8c7378;
+    --r-top:255,34,51;--r-bot:181,123,255;--r-speak:255,255,255;--r-listen:181,123,255;--r-arc:255,34,51;--r-glow1:200,20,40;--r-glow2:120,50,210;--r-ring:255,34,51;
+    --glow:rgba(255,34,51,.35)}
+  body[data-theme="nightops"] .panel > h3{color:var(--red)}
+  body[data-theme="nightops"] .mark b{color:var(--red)}
+  body[data-theme="nightops"] .clock small{color:var(--red)}
+  body[data-theme="nightops"] .date{color:var(--a2)}
+  body[data-theme="nightops"] .cond{color:var(--a2)}
+  body[data-theme="nightops"] .panel{border-color:rgba(255,34,51,.22)}
+  body[data-theme="nightops"] .panel::before{content:"";position:absolute;left:0;top:0;width:36px;height:2px;background:var(--red);box-shadow:0 0 10px var(--red)}
+  body[data-theme="nightops"][data-speaking="1"] #stateLabel{background:var(--red);border-color:var(--red);color:#fff}
+  body[data-theme="nightops"][data-mode="listening"] #stateLabel{background:var(--a2);border-color:var(--a2);color:#000}
+  body[data-theme="nightops"] .cq{color:var(--a2)}

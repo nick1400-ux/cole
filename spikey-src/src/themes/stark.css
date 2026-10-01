@@ -1,0 +1,14 @@
+  body[data-theme="stark"]{
+    --bg:#020a12; --panel:linear-gradient(180deg,rgba(40,170,255,.07),rgba(40,170,255,.015)); --line:rgba(90,200,255,.2);
+    --a:#4fd2ff; --a2:#ff8a3d; --alert:#ff3d54; --good:#5dffc4; --txt:#cdefff; --hi:#f2fbff; --mute:#5b86a0;
+    --holo:rgba(4,24,40,.82); --glow:rgba(79,210,255,.3); --chartbg:rgba(2,10,18,1);
+    --f-display:'Rajdhani',sans-serif; --f-body:'Rajdhani',sans-serif; --f-mono:'Share Tech Mono',monospace;
+    background:radial-gradient(ellipse at 50% 42%,#062238 0%,#03111e 40%,#020a12 80%);
+  }
+  body[data-theme="stark"] .panel{clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
+  body[data-theme="stark"] .panel::before{content:"";position:absolute;left:0;top:0;width:46px;height:2px;background:var(--a);box-shadow:0 0 10px var(--a)}
+  body[data-theme="stark"] .panel::after{content:"";position:absolute;right:0;bottom:0;width:24px;height:2px;background:var(--a2)}
+  body[data-theme="stark"] .top{clip-path:none}
+  body[data-theme="stark"] .clock,body[data-theme="stark"] .temp{text-shadow:0 0 22px rgba(79,210,255,.55)}
+  body[data-theme="stark"] #bgfx{opacity:.55}
+  body[data-theme="stark"] .screen::after{content:"";position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(79,210,255,.035) 0 1px,transparent 1px 3px)}

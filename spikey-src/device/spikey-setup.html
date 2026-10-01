@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spikey Screen Setup</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#070506;--panel:rgba(26,10,14,.8);--line:rgba(255,34,51,.25);--red:#ff2233;--uv:#b57bff;--good:#3dff8f;--txt:#ece6ea;--mute:#8c7378}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(ellipse at 30% 10%,#2a0a10,transparent 50%),var(--bg);color:var(--txt);font-family:'Space Grotesk',sans-serif;min-height:100vh;padding:40px 5vw}
+  h1{font-size:30px;letter-spacing:.2em}h1 b{color:var(--red)}
+  .sub{color:var(--mute);margin:8px 0 28px;font-size:16px;max-width:760px;line-height:1.5}
+  .step{background:var(--panel);border:1px solid var(--line);padding:22px 24px;margin-bottom:18px;max-width:1100px;position:relative}
+  .step::before{content:"";position:absolute;left:0;top:0;width:40px;height:2px;background:var(--red);box-shadow:0 0 10px var(--red)}
+  .step h2{font:500 12px 'JetBrains Mono';letter-spacing:.3em;color:var(--red);margin-bottom:14px}
+  button{font:600 13px 'JetBrains Mono';letter-spacing:.14em;padding:12px 18px;background:transparent;color:var(--txt);border:1px solid var(--line);cursor:pointer;margin:4px 8px 4px 0}
+  button:hover{border-color:var(--red)}
+  button.main{background:var(--red);border-color:var(--red);color:#fff}
+  button.side{background:var(--uv);border-color:var(--uv);color:#000}
+  #map{position:relative;height:220px;border:1px dashed var(--line);margin-top:14px}
+  .mon{position:absolute;border:1px solid var(--mute);background:rgba(255,255,255,.03);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font:500 12px 'JetBrains Mono';cursor:pointer;text-align:center;padding:4px}
+  .mon.main{border-color:var(--red);background:rgba(255,34,51,.18)}
+  .mon.side{border-color:var(--uv);background:rgba(181,123,255,.18)}
+  .mon small{color:var(--mute);font-size:10px}
+  .mon b{font-size:11px;letter-spacing:.15em}
+  .row{display:flex;gap:30px;flex-wrap:wrap;margin-top:12px;font:400 14px 'JetBrains Mono'}
+  .row span{color:var(--mute)}
+  pre{background:#0b0709;border:1px solid var(--line);padding:16px;font:400 12px/1.5 'JetBrains Mono';color:#e9d9dd;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:12px}
+  .ok{color:var(--good)}.warn{color:#ffb547}
+  ol{margin:10px 0 0 20px;line-height:1.8;color:var(--txt)}
+  label{display:inline-flex;align-items:center;gap:8px;font:400 14px 'JetBrains Mono';color:var(--mute);margin-right:18px}
+</style>
+</head>
+<body>
+<h1>SPIKEY <b>×</b> SCREEN SETUP</h1>
+<p class="sub">Spikey lives on your <b>laptop screen</b>, and your other monitors stay free for work. Detect your screens, check that the laptop is marked MAIN, and copy the command. Come back here when you add the TV and want a second screen.</p>
+
+<div class="step">
+  <h2>01 · DETECT SCREENS</h2>
+  <button id="detect" class="main">DETECT ALL SCREENS</button>
+  <span id="detectMsg" style="font:400 13px 'JetBrains Mono';color:var(--mute)"></span>
+  <div id="map"></div>
+  <p class="sub" style="margin:12px 0 0">Click a screen once to make it <b style="color:var(--red)">MAIN</b>, click it again to make it <b style="color:var(--uv)">SIDE</b>, and a third time to clear it.<br>
+  If detection isn't allowed: drag this window onto a screen, then press one of these buttons:</p>
+  <button id="hereMain">THIS SCREEN = MAIN</button><button id="hereSide">THIS SCREEN = SIDE</button>
+  <div class="row"><div><span>MAIN </span><b id="mainInfo">not set</b></div><div><span>SIDE </span><b id="sideInfo">not set</b></div></div>
+</div>
+
+<div class="step">
+  <h2>02 · OPTIONS</h2>
+  <label><input type="checkbox" id="optSide"> Also open a second screen (big chart + Spotify), e.g. for the TV later</label>
+  <label><input type="checkbox" id="optLogon"> Also open JARVIS when I sign in while already docked</label>
+</div>
+
+<div class="step">
+  <h2>03 · INSTALL</h2>
+  <ol>
+    <li>Press <b>COPY COMMAND</b>.</li>
+    <li>Open <b>PowerShell</b> from the Start menu, paste with right-click, and press Enter.</li>
+    <li>You should see <span class="ok">"Spikey dock launch installed"</span>. Then unplug and replug the dock.</li>
+    <li>The microphone is pre-approved for Spikey's own Chrome window, so you won't be asked every time.</li>
+  </ol>
+  <button id="copy" class="main" style="margin-top:14px">COPY COMMAND</button>
+  <span id="copyMsg" style="font:400 13px 'JetBrains Mono'"></span>
+  <pre id="out">Set the MAIN screen first.</pre>
+</div>
+
+<script>
+const S = {screens:[], main:null, side:null};
+const $ = id => document.getElementById(id);
+const fmt = s => s ? `${s.label || 'Screen'} · ${s.width}×${s.height} at (${s.left}, ${s.top})` : 'not set';
+
+function draw(){
+  const map = $('map'); map.innerHTML = '';
+  const list = S.screens.length ? S.screens : [S.main, S.side].filter(Boolean);
+  if (!list.length) return;
+  const minX = Math.min(...list.map(s => s.left)), minY = Math.min(...list.map(s => s.top));
+  const maxX = Math.max(...list.map(s => s.left + s.width)), maxY = Math.max(...list.map(s => s.top + s.height));
+  const sc = Math.min((map.clientWidth - 20)/(maxX - minX), (map.clientHeight - 20)/(maxY - minY));
+  list.forEach(s => {
+    const d = document.createElement('div');
+    const role = S.main && same(S.main, s) ? 'main' : S.side && same(S.side, s) ? 'side' : '';
+    d.className = 'mon ' + role;
+    d.style.left = (10 + (s.left - minX)*sc) + 'px'; d.style.top = (10 + (s.top - minY)*sc) + 'px';
+    d.style.width = (s.width*sc - 6) + 'px'; d.style.height = (s.height*sc - 6) + 'px';
+    d.innerHTML = `<b>${role ? role.toUpperCase() : '—'}</b>${s.label || 'Screen'}<small>${s.width}×${s.height}${s.isPrimary ? ' · primary' : ''}</small>`;
+    d.onclick = () => {
+      if (role === ''){ S.main = s; if (S.side && same(S.side, s)) S.side = null; }
+      else if (role === 'main'){ S.main = null; S.side = s; }
+      else { S.side = null; }
+      update();
+    };
+    map.appendChild(d);
+  });
+}
+const same = (a, b) => a.left === b.left && a.top === b.top && a.width === b.width;
+
+$('detect').onclick = async () => {
+  try{
+    if (!('getScreenDetails' in window)) throw new Error('unsupported');
+    const d = await window.getScreenDetails();
+    S.screens = d.screens.map(s => ({left:s.left, top:s.top, width:s.width, height:s.height, label:(s.isInternal ? 'LAPTOP · ' : '') + (s.label || 'Screen'), isPrimary:s.isPrimary, isInternal:s.isInternal}));
+    const lap = S.screens.find(s => s.isInternal);
+    if (lap && !S.main) S.main = lap;
+    $('detectMsg').innerHTML = `<span class="ok">Found ${S.screens.length} screens.</span>` + (lap ? ` <span class="ok">Laptop screen found and set as MAIN.</span>` : ` <span class="warn">I couldn't tell which one is the laptop. Click it to set it as MAIN.</span>`);
+    update();
+  }catch(e){
+    $('detectMsg').innerHTML = `<span class="warn">Automatic detection isn't available here. Use the "THIS SCREEN" buttons below instead.</span>`;
+  }
+};
+const here = () => ({left: screen.availLeft ?? window.screenX, top: screen.availTop ?? window.screenY, width: screen.width, height: screen.height, label: 'Screen at ' + (screen.availLeft ?? window.screenX)});
+$('hereMain').onclick = () => { S.main = here(); update(); };
+$('hereSide').onclick = () => { S.side = here(); update(); };
+$('optSide').onchange = update; $('optLogon').onchange = update;
+
+function build(){
+  if (!S.main) return 'Set the MAIN screen first.';
+  const useSide = $('optSide').checked && S.side;
+  const spec = x => `${x.left},${x.top},${x.width},${x.height}`;
+  const lines = [`main=${spec(S.main)}`].concat(useSide ? [`side=${spec(S.side)}`] : []);
+  return `$root = Join-Path $env:USERPROFILE 'Documents\\Spikey'
+if (-not (Test-Path (Join-Path $root 'spikey-watch.txt'))) { 'spikey-watch.txt is missing from Documents\\Spikey'; return }
+@(${lines.map(l => `'${l}'`).join(', ')}) | Set-Content -Path (Join-Path $root 'spikey-screens.txt') -Encoding UTF8
+# stop and remove the old watcher
+Stop-ScheduledTask -TaskName 'DockWatch' -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'DockWatch' -Confirm:$false -ErrorAction SilentlyContinue
+Stop-ScheduledTask -TaskName 'Spikey' -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like '*dockwatch*' -or $_.CommandLine -like '*spikey-watch*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+# the new watcher: starts at sign-in, and restarts itself every 5 minutes if it ever stops
+$a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -WindowStyle Hidden -Command "Invoke-Expression (Get-Content -Raw (Join-Path $env:USERPROFILE ''Documents\\Spikey\\spikey-watch.txt''))"'
+$t1 = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"
+$t2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew -StartWhenAvailable
+Register-ScheduledTask -TaskName 'Spikey' -Action $a -Trigger $t1,$t2 -Settings $s -Force | Out-Null
+Start-ScheduledTask -TaskName 'Spikey'
+'Spikey dock launch installed. MAIN: ${S.main.width}x${S.main.height} at ${S.main.left},${S.main.top}${useSide ? ` / SIDE: ${S.side.width}x${S.side.height} at ${S.side.left},${S.side.top}` : ''}'`;
+}
+function update(){ $('mainInfo').textContent = fmt(S.main); $('sideInfo').textContent = fmt(S.side); draw(); $('out').textContent = build(); }
+$('copy').onclick = async () => {
+  if (!S.main){ $('copyMsg').innerHTML = '<span class="warn">Set the MAIN screen first.</span>'; return; }
+  try{ await navigator.clipboard.writeText($('out').textContent); $('copyMsg').innerHTML = '<span class="ok">Copied. Now paste it into PowerShell.</span>'; }
+  catch{ const r = document.createRange(); r.selectNodeContents($('out')); getSelection().removeAllRanges(); getSelection().addRange(r); $('copyMsg').innerHTML = '<span class="warn">Selected. Press Ctrl+C.</span>'; }
+};
+addEventListener('resize', draw);
+</script>
+</body>
+</html>

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.R.V.I.S. · Halo</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;600&display=swap" rel="stylesheet">
+<style>
+  :root{ --bg:#07080d; --glass:rgba(255,255,255,.045); --edge:rgba(255,255,255,.09); --txt:#eef1f8; --mute:#7b8196; --a:#6ee7ff; --b:#a78bfa; --c:#f472b6; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--txt);font-family:'Manrope',system-ui,sans-serif}
+  canvas#fx{position:fixed;inset:0;width:100%;height:100%;filter:blur(38px) saturate(1.3)}
+  .veil{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 42%,transparent 0 22%,rgba(7,8,13,.55) 55%,var(--bg) 85%);pointer-events:none}
+
+  .top{position:fixed;top:5vh;left:4vw;right:4vw;display:flex;justify-content:space-between;align-items:flex-start}
+  .clock{font-weight:200;font-size:clamp(64px,7.5vw,128px);letter-spacing:-.04em;line-height:.9}
+  .clock small{font-size:.25em;font-weight:400;letter-spacing:0;color:var(--mute);margin-left:.3em}
+  .date{font-size:18px;font-weight:300;color:var(--mute);margin-top:12px}
+  .wx{text-align:right}
+  .wx .temp{font-weight:200;font-size:clamp(64px,7.5vw,128px);letter-spacing:-.04em;line-height:.9}
+  .wx .cond{font-size:18px;font-weight:300;color:var(--mute);margin-top:12px}
+  .wx .cond b{font-weight:400;color:var(--txt)}
+
+  #orb{position:fixed;left:50%;top:46%;width:34vh;aspect-ratio:1;transform:translate(-50%,-50%);border-radius:50%;cursor:pointer}
+  .center{position:fixed;left:50%;top:67%;transform:translateX(-50%);width:min(820px,70vw);text-align:center}
+  #stateLabel{font-size:12px;font-weight:600;letter-spacing:.3em;color:var(--mute);text-transform:uppercase}
+  body[data-mode="listening"] #stateLabel{color:var(--a)}
+  body[data-speaking="1"] #stateLabel{color:var(--c)}
+  #transcript{font-size:17px;font-weight:300;color:var(--mute);min-height:1.5em;margin-top:18px}
+  #transcript[data-live="1"]{color:var(--txt)}
+  #reply{font-size:clamp(22px,2vw,32px);font-weight:300;line-height:1.35;min-height:2.7em;margin-top:8px;letter-spacing:-.01em}
+
+  .card{position:fixed;background:var(--glass);border:1px solid var(--edge);border-radius:22px;padding:20px 22px;backdrop-filter:blur(24px) saturate(1.4)}
+  .card h4{font-size:12px;font-weight:600;letter-spacing:.18em;color:var(--mute);text-transform:uppercase;margin-bottom:12px;display:flex;justify-content:space-between}
+  .tasks{right:4vw;bottom:14vh;width:min(360px,26vw)}
+  ol#tasks{list-style:none;max-height:28vh;overflow:auto}
+  ol#tasks li{display:flex;gap:12px;align-items:baseline;padding:9px 0;font-size:16px;font-weight:300;border-top:1px solid var(--edge)}
+  ol#tasks li:first-child{border-top:0}
+  ol#tasks li b{font-weight:600;font-size:11px;color:var(--b)}
+  ol#tasks li.empty{color:var(--mute)}
+  .sys{left:4vw;bottom:14vh;width:min(300px,22vw)}
+  .kv{display:flex;justify-content:space-between;padding:6px 0;font-size:15px;font-weight:300}
+  .kv span:first-child{color:var(--mute)}
+  .pw{height:4px;border-radius:4px;background:rgba(255,255,255,.08);margin-top:8px;overflow:hidden}
+  .pw i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--a),var(--b))}
+  body[data-lowbatt="1"] .pw i{background:#fb7185}
+
+  .bar{position:fixed;left:50%;bottom:4vh;transform:translateX(-50%);width:min(760px,60vw);display:flex;align-items:center;gap:14px;
+    background:var(--glass);border:1px solid var(--edge);border-radius:999px;padding:12px 20px;backdrop-filter:blur(24px)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--mute);flex:none}
+  .dot.on{background:#34d399;box-shadow:0 0 12px #34d399}.dot.off{background:#fb7185}
+  #micLabel{font-size:11px;font-weight:600;letter-spacing:.14em;color:var(--mute);white-space:nowrap}
+  #cmd{flex:1;background:transparent;border:0;color:var(--txt);font:300 16px 'Manrope';outline:none}
+  #cmd::placeholder{color:#4b5063}
+
+  #holo{position:fixed;left:50%;top:46%;width:min(480px,80vw);z-index:5;background:rgba(20,22,32,.72);border:1px solid var(--edge);border-radius:28px;padding:26px 28px;
+    backdrop-filter:blur(30px) saturate(1.5);transform:translate(-50%,-50%) scale(.92);opacity:0;pointer-events:none;transition:.45s cubic-bezier(.2,.9,.2,1);
+    box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  #holo.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+  #holoTitle{font-size:12px;font-weight:600;letter-spacing:.2em;color:var(--mute);margin-bottom:14px}
+  .hrow{display:flex;justify-content:space-between;gap:20px;padding:10px 0;border-top:1px solid var(--edge);font-size:17px;font-weight:300}
+  .hrow span:last-child{color:var(--mute)}
+  .hbig{font-weight:200;font-size:76px;letter-spacing:-.04em;line-height:1;margin-bottom:6px}
+  #activate{position:fixed;inset:0;z-index:9;display:none;place-items:center;background:rgba(7,8,13,.8);cursor:pointer;font-weight:300;font-size:22px;letter-spacing:.1em}
+  #activate.show{display:grid}
+</style>
+</head>
+<body data-mode="idle">
+<canvas id="fx"></canvas>
+<div class="veil"></div>
+
+<div class="top">
+  <div>
+    <div class="clock"><span id="clock">--:--</span><small id="ampm"></small></div>
+    <div class="date" id="date">—</div>
+  </div>
+  <div class="wx">
+    <div class="temp" id="temp">--°</div>
+    <div class="cond"><b id="cond">Acquiring</b> · H <span id="hilo">—</span> · <span id="rain">—</span> rain</div>
+  </div>
+</div>
+
+<div id="orb" title="Click or press Space to talk"></div>
+
+<div class="center">
+  <div id="stateLabel">Initializing</div>
+  <div id="transcript"></div>
+  <div id="reply"></div>
+</div>
+
+<div class="card sys">
+  <h4>Systems</h4>
+  <div class="kv"><span>Power</span><span id="batt">—</span></div>
+  <div class="kv"><span>State</span><span id="battState">—</span></div>
+  <div class="kv"><span>Network</span><span id="net">—</span></div>
+  <div class="pw"><i id="battBar" style="width:0"></i></div>
+</div>
+
+<div class="card tasks">
+  <h4><span>Objectives</span><span id="taskCount">00</span></h4>
+  <ol id="tasks"></ol>
+</div>
+
+<div class="bar">
+  <span class="dot" id="micDot"></span><span id="micLabel">MIC OFFLINE</span>
+  <input id="cmd" placeholder="Ask Jarvis, or press Space to talk" autocomplete="off">
+</div>
+
+<div id="holo"><div id="holoTitle"></div><div id="holoBody"></div></div>
+<div id="activate">Tap to wake Jarvis</div>
+
+<script>
+/* ===== Halo visuals: soft living light that swells with voice ===== */
+(() => {
+  const cv = document.getElementById('fx'), ctx = cv.getContext('2d');
+  let W, H;
+  const resize = () => { W = cv.width = innerWidth/2; H = cv.height = innerHeight/2; };   // half-res: it's blurred anyway
+  addEventListener('resize', resize); resize();
+  const blobs = [
+    {c:[110,231,255], ph:0,   sp:.5},
+    {c:[167,139,250], ph:2.1, sp:.37},
+    {c:[244,114,182], ph:4.2, sp:.43},
+    {c:[110,231,255], ph:5.3, sp:.29}
+  ];
+  let s = 0, t = 0;
+  function frame(){
+    t += 1/60;
+    const JV = window.JV || {level:0};
+    s += ((JV.level||0) - s) * 0.1;
+    const sleep = JV.mode === 'sleep', listening = JV.mode === 'listening';
+    ctx.clearRect(0,0,W,H);
+    const cx = W/2, cy = H*0.46, base = Math.min(W,H)*0.13 * (sleep ? .6 : 1) * (1 + s*0.55 + (listening ? .12 : 0));
+    ctx.globalCompositeOperation = 'lighter';
+    for (const b of blobs){
+      const ox = Math.cos(t*b.sp + b.ph) * base*0.45 * (1 + s), oy = Math.sin(t*b.sp*1.3 + b.ph) * base*0.35 * (1 + s);
+      const r = base * (0.9 + 0.15*Math.sin(t*1.7 + b.ph) + s*0.4);
+      const g = ctx.createRadialGradient(cx+ox, cy+oy, 0, cx+ox, cy+oy, r);
+      const a = sleep ? .25 : .75;
+      g.addColorStop(0, `rgba(${b.c},${a})`); g.addColorStop(1, `rgba(${b.c},0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx+ox, cy+oy, r, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+<script>
+{{ENGINE}}
+</script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+# Spikey dock watcher. Run by the "Spikey" scheduled task. Edits to this file are picked up automatically.
+$root = Join-Path $env:USERPROFILE 'Documents\Spikey'
+$self = Join-Path $root 'spikey-watch.txt'
+$cfgPath = Join-Path $root 'spikey-screens.txt'
+$relaunchFlag = Join-Path $root 'relaunch.txt'
+$logDir = Join-Path $env:USERPROFILE 'Documents\DockWatch'
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$log = Join-Path $logDir 'dock-log.csv'
+$beat = Join-Path $logDir 'heartbeat.txt'
+$errs = Join-Path $logDir 'errors.txt'
+$diag = Join-Path $logDir 'diag.txt'
+if (-not (Test-Path $log)) { 'timestamp,event,external_displays' | Out-File $log -Encoding utf8 }
+function Stamp { Get-Date -Format 'yyyy-MM-dd HH:mm:ss' }
+function Write-Log($ev, $n) { ((Stamp) + ',' + $ev + ',' + $n) | Out-File $log -Append -Encoding utf8 }
+
+$hud = Join-Path $root 'spikey.html'
+# Spikey is hosted next to Cole (mic permission is remembered there); the local file is only a fallback
+$url = 'https://nick1400-ux.github.io/cole/spikey/'
+$browser = @('C:\Program Files\Google\Chrome\Application\chrome.exe', 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe', (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe')) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $browser) { $browser = 'chrome' }
+
+function Open-Spikey($spec, $query, $profileName) {
+    $args2 = @(('--app=' + $url + $query), '--start-fullscreen', '--no-first-run', '--autoplay-policy=no-user-gesture-required', '--disable-popup-blocking', ('--user-data-dir=' + (Join-Path $env:LOCALAPPDATA $profileName)))
+    if ($spec) {
+        $p = $spec.Split(',')
+        if ($p.Count -eq 4) { $args2 += ('--window-position=' + $p[0].Trim() + ',' + $p[1].Trim()); $args2 += ('--window-size=' + $p[2].Trim() + ',' + $p[3].Trim()) }
+    }
+    Start-Process $browser -ArgumentList $args2
+}
+function Get-SpikeyProcs($profileName) {
+    @(Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -like ('*' + $profileName + '*') })
+}
+function Read-Screens {
+    $cfg = @{}
+    if (Test-Path $cfgPath) { Get-Content $cfgPath | ForEach-Object { $kv = $_.Split('='); if ($kv.Count -eq 2) { $cfg[$kv[0].Trim()] = $kv[1].Trim() } } }
+    $cfg
+}
+function Read-Val($path, $name) {
+    try { (Get-ItemProperty -Path $path -Name $name -ErrorAction Stop) | Select-Object -ExpandProperty $name } catch { '(none)' }
+}
+function Write-Diag {
+    $out = @('=== Spikey diagnostics ' + (Stamp) + ' ===')
+    $cs = 'SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+    $out += 'Mic privacy (system)        : ' + (Read-Val ('HKLM:\' + $cs) 'Value')
+    $out += 'Mic privacy (this user)     : ' + (Read-Val ('HKCU:\' + $cs) 'Value')
+    $out += 'Mic privacy (desktop apps)  : ' + (Read-Val ('HKCU:\' + $cs + '\NonPackaged') 'Value')
+    $out += ''
+    $out += 'Recording devices (state 1 = active):'
+    $cap = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture'
+    Get-ChildItem $cap -ErrorAction SilentlyContinue | ForEach-Object {
+        $k = $_.PSPath
+        $state = Read-Val $k 'DeviceState'
+        $name = Read-Val ($k + '\Properties') '{a45c254e-df1c-4efd-8020-67d146a850e0},2'
+        $desc = Read-Val ($k + '\Properties') '{b3f8fa53-0004-438e-9003-51a46e139bfc},6'
+        $l0 = Read-Val $k 'Level:0'; $l1 = Read-Val $k 'Level:1'; $l2 = Read-Val $k 'Level:2'
+        $out += ('  state=' + $state + '  ' + $name + ' (' + $desc + ')  defaultStamps=' + $l0 + '/' + $l1 + '/' + $l2)
+    }
+    $out += ''
+    $out += 'Computer name: ' + $env:COMPUTERNAME
+    try { $out += 'WMI monitors: ' + ((Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorConnectionParams -ErrorAction Stop | ForEach-Object { 'active=' + $_.Active + ' tech=' + $_.VideoOutputTechnology }) -join ' | ') } catch { $out += 'WMI monitors: error ' + $_.Exception.Message }
+    try { $out += 'Video controllers: ' + ((Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object { $_.Name + ' ' + $_.CurrentHorizontalResolution + 'x' + $_.CurrentVerticalResolution + ' ' + $_.Status }) -join ' | ') } catch { $out += 'Video: error ' + $_.Exception.Message }
+    try { $out += 'Desktop monitors: ' + ((Get-CimInstance Win32_DesktopMonitor -ErrorAction Stop | ForEach-Object { $_.Name + '/' + $_.Availability + '/' + $_.ScreenWidth }) -join ' | ') } catch {}
+    try { $out += 'Dock-ish devices: ' + ((Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object { $_.FriendlyName -match 'DisplayLink|Dock|Thunderbolt|USB4|Synaptics|Dell|Lenovo|HP USB|Hub' } | ForEach-Object { $_.Class + ':' + $_.FriendlyName + '/' + $_.Status }) -join ' | ') } catch {}
+    try { $out += 'Session: ' + [Environment]::UserName + ' interactive=' + [Environment]::UserInteractive } catch {}
+    try { $out += 'PnP monitors present: ' + ((Get-PnpDevice -Class Monitor -PresentOnly -ErrorAction Stop | ForEach-Object { $_.FriendlyName + '/' + $_.Status }) -join ' | ') } catch { $out += 'PnP monitors: error ' + $_.Exception.Message }
+    $out += 'Playback devices (state 1 = active; highest stamps = Windows default):'
+    $ren = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render'
+    Get-ChildItem $ren -ErrorAction SilentlyContinue | ForEach-Object {
+        $k = $_.PSPath
+        $state = Read-Val $k 'DeviceState'
+        $name = Read-Val ($k + '\Properties') '{a45c254e-df1c-4efd-8020-67d146a850e0},2'
+        $desc = Read-Val ($k + '\Properties') '{b3f8fa53-0004-438e-9003-51a46e139bfc},6'
+        $l0 = Read-Val $k 'Level:0'; $l1 = Read-Val $k 'Level:1'; $l2 = Read-Val $k 'Level:2'
+        if ($state -eq 1) { $out += ('  state=' + $state + '  ' + $name + ' (' + $desc + ')  defaultStamps=' + $l0 + '/' + $l1 + '/' + $l2) }
+    }
+    $out += ''
+    $out += 'Spikey Chrome processes: ' + (Get-SpikeyProcs 'SpikeyMainChrome').Count
+    $out += 'Browser: ' + $browser
+    $out | Set-Content $diag -Encoding utf8
+}
+
+$selfTime = (Get-Item $self).LastWriteTime
+$last = $null
+Write-Log 'watcher-start' 0
+try { Write-Diag } catch { ((Stamp) + ' diag: ' + $_.Exception.Message) | Out-File $errs -Append -Encoding utf8 }
+while ($true) {
+    try {
+        # a newer version of this file was saved: exit so the task restarts with it
+        if ((Get-Item $self).LastWriteTime -ne $selfTime) { Write-Log 'watcher-updated' 0; break }
+
+        # remote relaunch: Spikey is restarted when relaunch.txt appears (its text is added to the address, e.g. ?debug=1)
+        if (Test-Path $relaunchFlag) {
+            $q = (Get-Content $relaunchFlag -Raw)
+            if ($q) { $q = $q.Trim() } else { $q = '' }
+            Remove-Item $relaunchFlag -Force
+            Get-SpikeyProcs 'SpikeyMainChrome' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            Start-Sleep 2
+            $cfg = Read-Screens
+            Open-Spikey $cfg['main'] $q 'SpikeyMainChrome'
+            Write-Log ('relaunched' + $q) 0
+            try { Write-Diag } catch {}
+        }
+
+        # remote shutdown: Nick asked Claude to turn the laptop off after testing (60s grace, cancel with: shutdown /a)
+        $shutdownFlag = Join-Path $root 'shutdown.txt'
+        if (Test-Path $shutdownFlag) {
+            Remove-Item $shutdownFlag -Force
+            Write-Log 'shutdown-requested' 0
+            & shutdown.exe /s /t 60 /c "Spikey: tests passed. Shutting down in 60 seconds. Run 'shutdown /a' to cancel."
+        }
+
+        $n = @(Get-CimInstance -Namespace root/wmi -ClassName WmiMonitorConnectionParams -ErrorAction Stop | Where-Object {
+            $_.Active -and (@(6, 11, 13, 2147483648) -notcontains [int64]$_.VideoOutputTechnology) }).Count
+        # some docks (DisplayLink / Synaptics) don't show up in WmiMonitorConnectionParams: also count plugged-in monitors
+        $pnp = 0
+        try { $pnp = @(Get-PnpDevice -Class Monitor -PresentOnly -Status OK -ErrorAction Stop).Count } catch {}
+        if ($n -eq 0 -and $pnp -ge 2) { $n = $pnp - 1 }
+        $docked = $n -gt 0
+        ((Stamp) + ' displays=' + $n + ' docked=' + $docked) | Set-Content $beat
+
+        if ($docked -ne $last) {
+            $ev = $(if ($null -eq $last) { 'start-' } else { '' }) + $(if ($docked) { 'docked' } else { 'undocked' })
+            Write-Log $ev $n
+            if ($docked -and $null -ne $last) {
+                Start-Sleep 3                      # let the monitors settle so the window lands on the right screen
+                $cfg = Read-Screens
+                if ((Get-SpikeyProcs 'SpikeyMainChrome').Count -gt 0) { Write-Log 'already-open' $n }
+                else { Open-Spikey $cfg['main'] '' 'SpikeyMainChrome'; Write-Log 'launched' $n }
+                if ($cfg['side'] -and (Get-SpikeyProcs 'SpikeySideChrome').Count -eq 0) { Open-Spikey $cfg['side'] '?screen=side' 'SpikeySideChrome'; Write-Log 'launched-side' $n }
+            }
+        }
+        $last = $docked
+    } catch {
+        ((Stamp) + ' ' + $_.Exception.Message) | Out-File $errs -Append -Encoding utf8
+    }
+    Start-Sleep 3
+}

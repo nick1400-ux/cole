@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.R.V.I.S. · {{THEME_NAME}}</title>
+<link href="https://fonts.googleapis.com/css2?{{FONTS}}&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:var(--bg);color:var(--txt);font-family:var(--f-body)}
+  #bgfx{position:fixed;inset:0;width:100%;height:100%;pointer-events:none}
+  .lbl{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;color:var(--mute)}
+  .num{font-family:var(--f-display)}
+
+  /* ===== frame ===== */
+  .screen{position:relative;z-index:1;height:100%;display:grid;gap:14px;padding:16px 18px}
+  body[data-screen="main"] .screen{grid-template-columns:23% 1fr 23%;grid-template-rows:auto 1fr auto auto;
+    grid-template-areas:"top top top" "left core right" "left talk right" "tape tape tape"}
+  body[data-screen="side"] .screen{grid-template-columns:1fr 25%;grid-template-rows:auto 1fr auto;
+    grid-template-areas:"top top" "chart rail" "tape rail"}
+  body[data-screen="main"] .side-only, body[data-screen="side"] .main-only{display:none !important}
+
+  .panel{position:relative;background:var(--panel);border:1px solid var(--line);padding:14px 16px;min-height:0;overflow:hidden}
+  .panel > h3{display:flex;justify-content:space-between;align-items:center;font:500 10.5px var(--f-mono);letter-spacing:.28em;text-transform:uppercase;color:var(--a);margin-bottom:10px}
+  .panel > h3 em{font-style:normal;color:var(--mute)}
+  .col{display:flex;flex-direction:column;gap:14px;min-height:0}
+  .grow{flex:1}
+
+  /* top bar */
+  .top{grid-area:top;display:flex;align-items:center;gap:22px;padding:10px 18px}
+  .mark{font:700 20px var(--f-display);letter-spacing:.42em;color:var(--txt);white-space:nowrap}
+  .mark b{color:var(--a)}
+  .top .sep{flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+  .chip{display:flex;align-items:center;gap:8px;font:500 11px var(--f-mono);letter-spacing:.2em;color:var(--mute);white-space:nowrap}
+  .chip b{color:var(--txt);font-weight:500}
+  #stateLabel{font:600 11px var(--f-mono);letter-spacing:.3em;color:var(--a);padding:6px 12px;border:1px solid var(--line);white-space:nowrap}
+  body[data-mode="listening"] #stateLabel{color:var(--bg);background:var(--a);border-color:var(--a)}
+  body[data-speaking="1"] #stateLabel{color:var(--bg);background:var(--a2);border-color:var(--a2)}
+  body[data-market="open"] #futures{color:var(--good)}
+
+  /* time block */
+  .clock{font:300 clamp(54px,5.2vw,96px) var(--f-display);line-height:.9;letter-spacing:-.02em;color:var(--hi)}
+  .clock small{font-size:.26em;letter-spacing:.1em;color:var(--a);margin-left:.35em;vertical-align:.95em}
+  .clock sup{font:400 .2em var(--f-mono);color:var(--mute);vertical-align:1.7em}
+  .date{margin-top:8px;font:500 14px var(--f-mono);letter-spacing:.2em;text-transform:uppercase;color:var(--a2)}
+
+  /* kv grid */
+  .kv{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+  .kv div{display:flex;flex-direction:column;gap:3px}
+  .kv b{font:500 16px var(--f-mono);color:var(--hi)}
+  .bar{height:3px;background:var(--line);margin-top:10px}
+  .bar i{display:block;height:100%;background:var(--a);box-shadow:0 0 10px var(--a);transition:width .6s}
+  body[data-lowbatt="1"] .bar i{background:var(--alert);box-shadow:0 0 10px var(--alert)}
+  #micSpark{width:100%;height:34px;margin-top:10px;display:block}
+
+  /* weather */
+  .wx{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
+  .temp{font:300 58px var(--f-display);line-height:.9;color:var(--hi)}
+  .cond{font:500 13px var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--a2);text-align:right}
+  #hourly{display:flex;gap:4px;height:88px;margin-top:12px;align-items:stretch}
+  .hr{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;font-family:var(--f-mono)}
+  .hr i{width:100%;max-width:14px;background:linear-gradient(to top,transparent,var(--a));opacity:.8}
+  .hr:first-child i{background:linear-gradient(to top,transparent,var(--a2))}
+  .ht{font-size:10px;color:var(--hi)}.hl{font-size:9px;color:var(--mute)}.hp{font-size:8.5px;color:var(--a2);opacity:.8}
+
+  /* sessions */
+  .sess{margin-bottom:9px}
+  .sn{display:flex;justify-content:space-between;font:500 11.5px var(--f-mono);letter-spacing:.06em;color:var(--mute)}
+  .sn span:first-child{color:var(--txt);letter-spacing:.14em;text-transform:uppercase}
+  .sess.live .sn span:last-child{color:var(--good)}
+  .sb{height:3px;background:var(--line);margin-top:5px}
+  .sb i{display:block;height:100%;background:var(--good);box-shadow:0 0 8px var(--good)}
+
+  /* lists */
+  ol#tasks,ul#comms{list-style:none;overflow:auto;max-height:100%}
+  ol#tasks li{display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:15px}
+  ol#tasks li b{font:500 11px var(--f-mono);color:var(--a);padding-top:3px}
+  ul#comms li{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .ct{grid-row:span 2;font:500 10px var(--f-mono);color:var(--mute);padding-top:2px}
+  .cq{font:500 12px var(--f-mono);color:var(--a2)}
+  .cq::before{content:"› "}
+  .ca{font-size:13.5px;color:var(--txt);line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  li.empty{color:var(--mute);font-size:14px;border:0 !important;display:block !important}
+
+  /* core */
+  .core{grid-area:core;position:relative;min-height:0}
+  #orb{position:absolute;inset:0;cursor:pointer}
+  #orb canvas{width:100%;height:100%;display:block}
+  .talk{grid-area:talk;text-align:center;padding:0 2vw 6px}
+  #transcript{font:400 14px var(--f-mono);color:var(--mute);min-height:1.4em}
+  #transcript[data-live="1"]{color:var(--a2)}
+  #transcript:not(:empty)::before{content:"› "}
+  #reply{margin-top:6px;font:300 clamp(20px,1.6vw,28px) var(--f-body);line-height:1.3;min-height:2.6em;color:var(--hi)}
+
+  /* tape + command */
+  .tape{grid-area:tape;display:flex;align-items:center;gap:14px;padding:0 14px;height:52px}
+  .tape .tv{flex:1;min-width:0;height:44px;overflow:hidden}
+  .cmdrow{display:flex;align-items:center;gap:12px;width:34%;min-width:320px;border-left:1px solid var(--line);padding-left:14px}
+  body[data-screen="side"] .cmdrow{display:none}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--mute);flex:none}
+  .dot.on{background:var(--good);box-shadow:0 0 10px var(--good)}.dot.off{background:var(--alert);box-shadow:0 0 10px var(--alert)}
+  #micLabel{font:500 10px var(--f-mono);letter-spacing:.2em;color:var(--mute);white-space:nowrap}
+  #cmd{flex:1;min-width:0;background:transparent;border:0;color:var(--hi);font:400 14px var(--f-mono);outline:none}
+  #cmd::placeholder{color:var(--mute);opacity:.6}
+
+  /* side screen */
+  .chart{grid-area:chart;padding:0;display:flex;flex-direction:column}
+  .chart > h3{padding:12px 16px 0}
+  #chartBox{flex:1;min-height:0}
+  .rail{grid-area:rail}
+  #spotify{width:100%;height:352px;border:0;border-radius:12px;display:block}
+  #mini{height:170px}
+
+  /* holo */
+  #holo{position:fixed;left:50%;top:44%;width:min(560px,80vw);z-index:20;padding:24px 28px;background:var(--holo);border:1px solid var(--a);
+    backdrop-filter:blur(10px);box-shadow:0 0 60px var(--glow);transform:translate(-50%,-50%) scale(.7);opacity:0;pointer-events:none;transition:.45s cubic-bezier(.2,.9,.2,1)}
+  #holo.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+  #holoTitle{font:600 12px var(--f-mono);letter-spacing:.36em;color:var(--a);margin-bottom:14px}
+  .hrow{display:flex;justify-content:space-between;gap:20px;padding:9px 0;border-bottom:1px solid var(--line);font-size:17px}
+  .hrow span:last-child{font:500 14px var(--f-mono);color:var(--a2)}
+  .hbig{font:300 70px var(--f-display);line-height:1;margin-bottom:8px;color:var(--hi)}
+  #activate{position:fixed;inset:0;z-index:30;display:none;place-items:center;background:rgba(0,0,0,.75);cursor:pointer;font:600 16px var(--f-mono);letter-spacing:.5em;color:var(--a)}
+  #activate.show{display:grid}
+
+  /* ===== theme ===== */
+{{THEME_CSS}}
+</style>
+</head>
+<body data-mode="idle" data-theme="{{THEME_ID}}">
+<canvas id="bgfx"></canvas>
+<div class="screen">
+  <header class="panel top">
+    <div class="mark">{{MARK}}</div>
+    <span class="sep"></span>
+    <span class="chip side-only">MARKETS LINK</span>
+    <span class="chip"><span id="futures">—</span></span>
+    <span class="chip">MIAMI <b id="temp2">--°</b></span>
+    <span class="chip"><b id="clock2">--:--</b></span>
+    <span id="stateLabel">INITIALIZING</span>
+  </header>
+
+  <!-- MAIN SCREEN -->
+  <aside class="col main-only" style="grid-area:left">
+    <section class="panel">
+      <h3>Local time <em id="uptime">—</em></h3>
+      <div class="clock"><span id="clock">--:--</span><small id="ampm"></small><sup id="seconds"></sup></div>
+      <div class="date" id="date">—</div>
+    </section>
+    <section class="panel">
+      <h3>Atmospherics <em>Miami</em></h3>
+      <div class="wx"><div class="temp" id="temp">--°</div><div class="cond"><div id="cond">Acquiring</div><div style="color:var(--mute);margin-top:4px">H/L <span id="hilo">—</span></div></div></div>
+      <div id="hourly"></div>
+    </section>
+    <section class="panel grow">
+      <h3>Systems <em id="net">—</em></h3>
+      <div class="kv">
+        <div><span class="lbl">Power</span><b id="batt">—</b></div>
+        <div><span class="lbl">State</span><b id="battState">—</b></div>
+      </div>
+      <div class="bar"><i id="battBar" style="width:0"></i></div>
+      <div class="lbl" style="margin-top:14px">Voice input</div>
+      <canvas id="micSpark"></canvas>
+    </section>
+  </aside>
+
+  <div class="core main-only"><div id="orb" title="Click or press Space to talk"><canvas id="fx"></canvas></div></div>
+  <div class="talk main-only"><div id="transcript"></div><div id="reply"></div></div>
+
+  <aside class="col main-only" style="grid-area:right">
+    <section class="panel">
+      <h3>Market sessions <em>ET</em></h3>
+      <div id="sessions"></div>
+    </section>
+    <section class="panel" style="max-height:30%">
+      <h3>Objectives <em id="taskCount">00</em></h3>
+      <ol id="tasks"></ol>
+    </section>
+    <section class="panel grow">
+      <h3>Comms log</h3>
+      <ul id="comms"></ul>
+    </section>
+  </aside>
+
+  <!-- SIDE SCREEN -->
+  <section class="panel chart side-only">
+    <h3>Chart <em id="symLabel">NAS100</em></h3>
+    <div id="chartBox"></div>
+  </section>
+  <aside class="col rail side-only">
+    <section class="panel">
+      <h3>Soundtrack</h3>
+      <iframe id="spotify" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>
+    </section>
+    <section class="panel">
+      <h3>US30 <em>1D</em></h3>
+      <div id="mini"></div>
+    </section>
+    <section class="panel grow">
+      <h3>Sessions <em>ET</em></h3>
+      <div id="sessionsSide"></div>
+    </section>
+  </aside>
+
+  <footer class="panel tape">
+    <div class="tv" id="tape"></div>
+    <div class="cmdrow">
+      <span class="dot" id="micDot"></span><span id="micLabel">MIC OFFLINE</span>
+      <input id="cmd" placeholder="type a command ⏎" autocomplete="off">
+    </div>
+  </footer>
+</div>
+
+<div id="holo"><div id="holoTitle"></div><div id="holoBody"></div></div>
+<div id="activate">CLICK TO ACTIVATE</div>
+
+<script>
+/* ===== markets + music embeds ===== */
+(() => {
+  const SIDE = new URLSearchParams(location.search).get('screen') === 'side';
+  const SPOTIFY = 'https://open.spotify.com/embed/playlist/37i9dQZF1DX6J5NfMJS675?utm_source=generator&theme=0';  // swap for your playlist
+  const TV = 'https://s3.tradingview.com/external-embedding/embed-widget-';
+  const widget = (el, name, cfg) => {
+    el.innerHTML = '<div class="tradingview-widget-container" style="height:100%;width:100%"><div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div></div>';
+    const s = document.createElement('script'); s.src = TV + name + '.js'; s.async = true; s.innerHTML = JSON.stringify(cfg);
+    el.firstChild.appendChild(s);
+  };
+  const css = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+  const names = {'OANDA:NAS100USD':'NAS100','OANDA:US30USD':'US30','OANDA:SPX500USD':'SPX500','OANDA:XAUUSD':'GOLD','BITSTAMP:BTCUSD':'BTC','TVC:USOIL':'OIL','TVC:DXY':'DXY'};
+  widget(document.getElementById('tape'), 'ticker-tape', {
+    symbols: [{proName:'OANDA:NAS100USD',title:'NAS100'},{proName:'OANDA:US30USD',title:'US30'},{proName:'OANDA:SPX500USD',title:'SPX500'},
+              {proName:'OANDA:XAUUSD',title:'GOLD'},{proName:'TVC:DXY',title:'DXY'},{proName:'BITSTAMP:BTCUSD',title:'BTC'},{proName:'TVC:USOIL',title:'OIL'}],
+    showSymbolLogo:false, isTransparent:true, displayMode:'adaptive', colorTheme:'dark', locale:'en'
+  });
+  if (!SIDE) return;
+  window.JV_setSymbol = sym => {
+    document.getElementById('symLabel').textContent = names[sym] || sym;
+    widget(document.getElementById('chartBox'), 'advanced-chart', {
+      autosize:true, symbol:sym, interval:'5', timezone:'America/New_York', theme:'dark', style:'1', locale:'en',
+      backgroundColor: css('--chartbg') || 'rgba(0,0,0,0)', gridColor:'rgba(255,255,255,0.04)',
+      hide_side_toolbar:false, allow_symbol_change:true, withdateranges:true, details:false, support_host:'https://www.tradingview.com'
+    });
+  };
+  let saved = 'OANDA:NAS100USD'; try{ saved = JSON.parse(localStorage.getItem('jarvis.symbol')) || saved; }catch{}
+  window.JV_setSymbol(saved);
+  widget(document.getElementById('mini'), 'mini-symbol-overview', {symbol:'OANDA:US30USD', width:'100%', height:'100%', locale:'en', dateRange:'1D', colorTheme:'dark', isTransparent:true, autosize:true});
+  document.getElementById('spotify').src = SPOTIFY;
+  // mirror the session list onto the side rail
+  const mirror = () => { const a = document.getElementById('sessions'), b = document.getElementById('sessionsSide'); if (a && b) b.innerHTML = a.innerHTML; };
+  setInterval(mirror, 1000);
+})();
+
+/* ===== small live readouts shared by every theme ===== */
+(() => {
+  const c = document.getElementById('micSpark'); if (!c) return;
+  const x = c.getContext('2d'); const hist = new Array(120).fill(0);
+  const col = () => getComputedStyle(document.body).getPropertyValue('--a').trim();
+  function f(){
+    const r = c.getBoundingClientRect(); c.width = r.width*devicePixelRatio; c.height = r.height*devicePixelRatio;
+    hist.push((window.JV && JV.level) || 0); hist.shift();
+    x.clearRect(0,0,c.width,c.height); x.strokeStyle = col(); x.lineWidth = 1.5*devicePixelRatio; x.beginPath();
+    hist.forEach((v,i) => { const px = i/(hist.length-1)*c.width, py = c.height*(1 - .1 - v*.8); i ? x.lineTo(px,py) : x.moveTo(px,py); });
+    x.stroke(); setTimeout(() => requestAnimationFrame(f), 50);
+  }
+  f();
+  setInterval(() => {
+    const t = document.getElementById('temp'), c2 = document.getElementById('clock');
+    document.getElementById('temp2').textContent = t ? t.textContent : '--°';
+    document.getElementById('clock2').textContent = c2 ? c2.textContent + ' ' + (document.getElementById('ampm').textContent||'') : '';
+  }, 1000);
+})();
+</script>
+<script>
+/* ===== theme visuals ===== */
+{{THEME_JS}}
+</script>
+<script>
+{{ENGINE}}
+</script>
+</body>
+</html>

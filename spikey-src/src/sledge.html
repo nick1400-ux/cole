@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.R.V.I.S. · Sledge B</title>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@500;800;900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{ --ink:#0b0b0b; --concrete:#1a1a1a; --gray:#7d7d7d; --paper:#ecebe6; --red:#ff2d2d; --uv:#8f3bff; --acid:#3dff6e; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:var(--ink);color:var(--paper);font-family:'Space Mono',monospace}
+  /* concrete + film grain */
+  body::before{content:"";position:fixed;inset:-50%;pointer-events:none;z-index:50;opacity:.13;mix-blend-mode:screen;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    animation:grain .5s steps(4) infinite}
+  @keyframes grain{25%{transform:translate(-3%,2%)}50%{transform:translate(2%,-3%)}75%{transform:translate(-1%,-2%)}}
+  body{background:radial-gradient(ellipse at 50% 40%,#1d1d1d 0%,#101010 55%,#060606 100%)}
+  .stencil{font-family:'Big Shoulders Stencil Display',sans-serif;text-transform:uppercase;line-height:.82}
+  .tape{display:inline-block;background:var(--paper);color:var(--ink);font:700 11px 'Space Mono';letter-spacing:.18em;padding:3px 8px;text-transform:uppercase;transform:rotate(-1.2deg)}
+  .tape.red{background:var(--red);color:#000}
+
+  .wrap{position:relative;z-index:1;height:100%;display:grid;grid-template-columns:1.15fr 1fr .9fr;grid-template-rows:auto 1fr auto;gap:0;border:2px solid var(--paper);margin:2.2vh 1.6vw;height:calc(100% - 4.4vh)}
+  .cell{border-right:2px solid var(--paper);border-bottom:2px solid var(--paper);padding:18px 22px;position:relative;min-height:0}
+  .cell.right{border-right:0}
+  header.cell{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;padding:12px 22px;border-right:0}
+  header .brand{font-size:34px;letter-spacing:.04em}
+  header .brand em{font-style:normal;color:var(--red)}
+  header .motto{font-size:11px;letter-spacing:.35em;color:var(--gray)}
+  #stateLabel{font:700 12px 'Space Mono';letter-spacing:.25em;padding:6px 10px;border:2px solid var(--paper)}
+  body[data-mode="listening"] #stateLabel{background:var(--acid);color:#000;border-color:var(--acid)}
+  body[data-speaking="1"] #stateLabel{background:var(--red);color:#000;border-color:var(--red)}
+  body[data-mode="sleep"] #stateLabel{color:var(--gray);border-color:var(--gray)}
+
+  /* left: time */
+  .time .clock{font-size:clamp(110px,13vw,230px);font-weight:900;letter-spacing:-.01em;margin-top:10px}
+  .time .ampm{font-size:clamp(28px,3vw,52px);font-weight:800;color:var(--red);margin-left:10px}
+  .time .date{font-size:clamp(26px,2.6vw,44px);font-weight:800;margin-top:14px;color:var(--paper)}
+  .time .secs{position:absolute;right:22px;top:18px;font:700 14px 'Space Mono';color:var(--gray)}
+  .sys{display:grid;grid-template-columns:repeat(4,auto);gap:4px 28px;margin-top:28px;justify-content:start}
+  .sys span{font-size:10px;letter-spacing:.2em;color:var(--gray);text-transform:uppercase}
+  .sys b{font-size:16px}
+  .power{height:10px;border:2px solid var(--paper);margin-top:14px;width:70%}
+  .power i{display:block;height:100%;background:var(--paper)}
+  body[data-lowbatt="1"] .power i{background:var(--red)}
+
+  /* centre: signal */
+  .signal{display:flex;flex-direction:column;align-items:stretch}
+  .signal > .tape{align-self:flex-start}
+  #orb{flex:1;position:relative;cursor:pointer;min-height:0;margin-top:10px;border:2px solid #333;background:#070707}
+  #orb canvas{position:absolute;inset:0;width:100%;height:100%}
+  .signal .who{display:flex;justify-content:space-between;align-items:baseline;margin-top:12px}
+  .signal .who .stencil{font-size:46px}
+  #transcript{font-size:14px;color:var(--gray);min-height:1.5em;margin-top:6px}
+  #transcript[data-live="1"]{color:var(--acid)}
+  #transcript:not(:empty)::before{content:"IN > "}
+  #reply{font-family:'Big Shoulders Stencil Display';font-weight:800;text-transform:uppercase;font-size:clamp(24px,2.1vw,36px);line-height:1;min-height:2.1em;margin-top:6px}
+
+  /* right: weather + objectives */
+  .right{display:flex;flex-direction:column;gap:18px}
+  .wx .temp{font-size:clamp(90px,9vw,160px);font-weight:900}
+  .wx .cond{font-size:26px;font-weight:800;color:var(--paper)}
+  .wx .row{display:flex;gap:22px;margin-top:10px;font-size:13px;color:var(--gray)}
+  .wx .row b{color:var(--paper)}
+  ol#tasks{list-style:none;border-top:2px solid var(--paper);flex:1;overflow:auto}
+  ol#tasks li{display:flex;gap:12px;padding:9px 0;border-bottom:1px dashed #444;font-size:14px}
+  ol#tasks li b{color:var(--red)}
+  ol#tasks li.empty{color:var(--gray)}
+
+  footer.cell{grid-column:1/-1;border-bottom:0;border-right:0;display:flex;align-items:center;gap:16px;padding:12px 22px}
+  .dot{width:12px;height:12px;background:var(--gray);flex:none}
+  .dot.on{background:var(--acid)}.dot.off{background:var(--red)}
+  #micLabel{font-size:11px;letter-spacing:.2em;white-space:nowrap}
+  #cmd{flex:1;background:transparent;border:0;border-bottom:2px solid #333;color:var(--paper);font:400 15px 'Space Mono';padding:6px 0;outline:none}
+  #cmd:focus{border-color:var(--red)}
+  #cmd::placeholder{color:#555}
+
+  #holo{position:fixed;left:50%;top:50%;z-index:40;width:min(560px,86vw);background:var(--paper);color:var(--ink);padding:24px 28px 28px;
+    transform:translate(-50%,-50%) rotate(-1.5deg) scale(.4);opacity:0;pointer-events:none;transition:.35s cubic-bezier(.2,1.4,.3,1);box-shadow:14px 14px 0 var(--red)}
+  #holo.show{opacity:1;transform:translate(-50%,-50%) rotate(-1.5deg) scale(1);pointer-events:auto}
+  #holoTitle{font-family:'Big Shoulders Stencil Display';font-weight:900;font-size:42px;text-transform:uppercase;margin-bottom:10px;border-bottom:3px solid var(--ink)}
+  .hrow{display:flex;justify-content:space-between;gap:20px;padding:8px 0;border-bottom:1px dashed #888;font-size:15px}
+  .hrow span:last-child{font-weight:700}
+  .hbig{font-family:'Big Shoulders Stencil Display';font-weight:900;font-size:90px;line-height:.9}
+  #activate{position:fixed;inset:0;z-index:60;display:none;place-items:center;background:rgba(0,0,0,.85);cursor:pointer}
+  #activate.show{display:grid}
+  #activate b{font-family:'Big Shoulders Stencil Display';font-weight:900;font-size:80px;color:var(--red)}
+</style>
+</head>
+<body data-mode="idle">
+<div class="wrap">
+  <header class="cell">
+    <div class="brand stencil">SLEDGE B <em>//</em> J.A.R.V.I.S.</div>
+    <div class="motto">BY OUTCASTS FOR OUTCASTS</div>
+    <div id="stateLabel">BOOTING</div>
+  </header>
+
+  <section class="cell time">
+    <span class="tape red">LOCAL TIME</span>
+    <div class="secs"><span id="seconds">00</span>s</div>
+    <div class="stencil"><span class="clock" id="clock">--:--</span><span class="ampm" id="ampm"></span></div>
+    <div class="date stencil" id="date">—</div>
+    <div class="sys">
+      <span>Power</span><span>State</span><span>Net</span><span>Session</span>
+      <b id="batt">—</b><b id="battState">—</b><b id="net">—</b><b id="uptime">—</b>
+    </div>
+    <div class="power"><i id="battBar" style="width:0"></i></div>
+  </section>
+
+  <section class="cell signal">
+    <span class="tape">SIGNAL</span>
+    <div id="orb" title="Click or press Space to talk"><canvas id="fx"></canvas></div>
+    <div class="who"><span class="stencil">JARVIS</span><span class="tape red">SPACE = TALK</span></div>
+    <div id="transcript"></div>
+    <div id="reply"></div>
+  </section>
+
+  <section class="cell right">
+    <div class="wx">
+      <span class="tape">MIAMI // OUTSIDE</span>
+      <div class="stencil temp" id="temp">--°</div>
+      <div class="stencil cond" id="cond">Acquiring</div>
+      <div class="row"><span>HI/LO <b id="hilo">—</b></span><span>RAIN <b id="rain">—</b></span><span>WIND <b id="wind">—</b></span></div>
+    </div>
+    <div style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <span class="tape red" style="align-self:flex-start;margin-bottom:8px">OBJECTIVES [<span id="taskCount">00</span>]</span>
+      <ol id="tasks"></ol>
+    </div>
+  </section>
+
+  <footer class="cell">
+    <span class="dot" id="micDot"></span><span id="micLabel">MIC OFFLINE</span>
+    <input id="cmd" placeholder="TYPE A COMMAND + ENTER" autocomplete="off">
+  </footer>
+</div>
+
+<div id="holo"><div id="holoTitle"></div><div id="holoBody"></div></div>
+<div id="activate"><b>CLICK TO ACTIVATE</b></div>
+
+<script>
+/* ===== Sledge B visuals: hard-edged spectrum bars ===== */
+(() => {
+  const cv = document.getElementById('fx'), ctx = cv.getContext('2d');
+  let W, H, DPR;
+  const resize = () => { DPR = Math.min(2, devicePixelRatio||1); const r = cv.getBoundingClientRect(); W = cv.width = r.width*DPR; H = cv.height = r.height*DPR; };
+  addEventListener('resize', resize); setTimeout(resize, 50); resize();
+  const bars = 48, vals = new Float32Array(bars), freq = new Uint8Array(256);
+  let t = 0;
+  function frame(){
+    t += 1/60;
+    const JV = window.JV || {level:0};
+    const speaking = JV.speaking, listening = JV.mode === 'listening', sleep = JV.mode === 'sleep';
+    if (JV.analyser) JV.analyser.getByteFrequencyData(freq);
+    ctx.fillStyle = '#070707'; ctx.fillRect(0,0,W,H);
+    // scan lines
+    ctx.fillStyle = 'rgba(255,255,255,.03)'; for (let y = 0; y < H; y += 4*DPR) ctx.fillRect(0,y,W,1);
+    const gap = 4*DPR, bw = (W - gap*(bars+1))/bars, mid = H/2;
+    for (let i = 0; i < bars; i++){
+      let target;
+      if (sleep) target = 0.02;
+      else if (speaking) target = JV.level * (0.4 + 0.6*Math.abs(Math.sin(i*0.7 + t*9))) ;
+      else if (JV.analyser) target = Math.pow(freq[3 + i*2]/255, 1.4);
+      else target = 0.05 + 0.04*Math.sin(i*0.5 + t*2);
+      target = Math.max(target, 0.03 + 0.02*Math.sin(i + t*3));
+      vals[i] += (target - vals[i]) * (target > vals[i] ? 0.5 : 0.12);
+      const h = vals[i] * (H*0.46);
+      const x = gap + i*(bw+gap);
+      ctx.fillStyle = speaking ? '#ff2d2d' : listening ? '#3dff6e' : '#ecebe6';
+      ctx.fillRect(x, mid - h, bw, h*2);
+      if (vals[i] > 0.6){ ctx.fillStyle = '#8f3bff'; ctx.fillRect(x, mid - h - 6*DPR, bw, 3*DPR); }
+    }
+    // centre rule
+    ctx.fillStyle = 'rgba(236,235,230,.35)'; ctx.fillRect(0, mid, W, 1*DPR);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+<script>
+{{ENGINE}}
+</script>
+</body>
+</html>

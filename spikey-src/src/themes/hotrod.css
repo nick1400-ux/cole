@@ -1,0 +1,17 @@
+  body[data-theme="hotrod"]{
+    --bg:#0c0304; --panel:linear-gradient(160deg,rgba(255,200,87,.06),rgba(180,20,30,.06)); --line:rgba(255,190,90,.18);
+    --a:#ffc857; --a2:#ff4b3e; --alert:#ff2a2a; --good:#7dffb2; --txt:#f5e6d3; --hi:#fff6ea; --mute:#9b7d6a;
+    --holo:rgba(30,6,8,.85); --glow:rgba(255,75,62,.35); --chartbg:rgba(12,3,4,1);
+    --f-display:'Saira Condensed',sans-serif; --f-body:'Saira',sans-serif; --f-mono:'IBM Plex Mono',monospace;
+    background:radial-gradient(ellipse at 50% 42%,#3a0a0d 0%,#1a0507 42%,#0c0304 80%);
+  }
+  body[data-theme="hotrod"] .panel{border-radius:4px;border-color:transparent;background:var(--panel);
+    box-shadow:inset 0 0 0 1px rgba(255,200,87,.14),inset 0 1px 0 rgba(255,220,150,.18)}
+  body[data-theme="hotrod"] .panel > h3{color:var(--a)}
+  body[data-theme="hotrod"] .panel > h3::before{content:"";width:6px;height:6px;background:var(--a2);margin-right:10px;box-shadow:0 0 8px var(--a2)}
+  body[data-theme="hotrod"] .panel > h3{justify-content:flex-start}
+  body[data-theme="hotrod"] .panel > h3 em{margin-left:auto}
+  body[data-theme="hotrod"] .clock,body[data-theme="hotrod"] .temp{font-weight:300;color:var(--hi);text-shadow:0 0 26px rgba(255,120,60,.45)}
+  body[data-theme="hotrod"] .clock small{color:var(--a2)}
+  body[data-theme="hotrod"] .mark{letter-spacing:.3em}
+  body[data-theme="hotrod"] #bgfx{opacity:.8}
