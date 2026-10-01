@@ -16,8 +16,10 @@ SPIKEY_JS = r"""async () => {
   r = await JV_coleLog("closed that long for 20 points", fake({trades:[{existing:1,contract:'YM',dir:'LONG',qty:1,pnl:100,r:2,note:'closed at target',rules:{}}]}));
   out.msg3 = r.message;
   // 3) backtest / watched setup -> model returns nothing; junk without direction is dropped
-  r = await JV_coleLog("in replay I took a long win 2R", fake({trades:[{existing:null,pnl:50}]}));
+  r = await JV_coleLog("in replay I took a long win 2R", fake({trades:[{existing:null}]}));
   out.msg4 = r.message;
+  r = await JV_coleLog("nasdaq hit my stop for 15 points on 1 micro", fake({trades:[{existing:null,contract:'micro nasdaq',dir:'',qty:1,pnl:-30,note:'entry was wrong'}]}));
+  out.msg5 = r.message;
   out.final = window.__db['days/'+k].trades; out.prompt2 = prompts[2];
   return out; }"""
 async def main():
@@ -33,9 +35,9 @@ async def main():
         pg = await ctx.new_page(); pg.on('pageerror', lambda e: errs.append('spikey: '+str(e)))
         await pg.goto('file:///home/claude/Jarvis/final/spikey.html', wait_until='domcontentloaded'); await pg.wait_for_timeout(6000)
         o = await pg.evaluate(SPIKEY_JS)
-        for k in ['msg1','msg2','msg3','msg4']: print(k, '->', o[k])
+        for k in ['msg1','msg2','msg3','msg4','msg5']: print(k, '->', o[k])
         f = o['final']; print('trades:', json.dumps(f)[:600]); print('lossAt set:', bool(o['after1'].get('lossAt')))
-        assert len(f) == 2 and f[0]['dir']=='SHORT' and f[0]['pnl']==-30 and f[0]['rules']['noRevenge'] is False
+        assert len(f) == 3 and f[2]['contract']=='MNQ' and f[0]['dir']=='SHORT' and f[0]['pnl']==-30 and f[0]['rules']['noRevenge'] is False
         assert f[1]['pnl']==100 and f[1]['r']==2 and 'closed at target' in f[1]['note']
         assert 'Trades already logged today: #0' in o['prompt2'] and '#1: LONG 1 YM' in o['prompt2'] and 'Short below 42,180' in o['prompt2']
         print('pnl tile today:', await pg.inner_text('#pnlTodayTrades'), await pg.inner_text('#pnlTodayAmt'))
@@ -53,6 +55,9 @@ async def main():
         print('tab after save:', await pg2.evaluate('tab'), '| trades:', await pg2.evaluate('JSON.stringify(day().trades)'))
         v = await pg2.inner_text('#view'); i = v.lower().find("today's trades"); print('TRADE TAB:', v[i:i+120].replace('\n',' | '))
         assert await pg2.evaluate('day().trades.length') == 1
+        await pg2.evaluate("""() => { days['2026-09-30'] = Object.assign(blankDay(), {trades:[{contract:'NQ',dir:'',qty:1,pnl:'',r:'',note:'stopped out',rules:{plan:false,size:true,noRevenge:true,noFomo:true,window:true},via:'note'},{contract:'GC',dir:'LONG',qty:1,pnl:-200,r:'',note:'London low',rules:{plan:true,size:true,noRevenge:true,noFomo:true,window:true},via:'note'}]}); ui.logMkt='Gold'; render(); }""")
+        v = await pg2.inner_text('#view'); i = v.lower().find('trade log'); print('LOG (Gold):', v[i:i+220].replace('\n',' | '))
+        assert 'GC' in v[i:] and 'NQ' not in v[i:i+300]
         assert 'Trades already logged today: none' in await pg2.evaluate('__prompts[0]')
         print('errors', errs); assert not errs
         await b.close(); print('PASS')

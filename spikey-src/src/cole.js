@@ -69,7 +69,7 @@
   }
   window.JV_renderPnl = rows => render(compute(rows));      // also used by tests
   // ---- write to Cole: sort what Nick said (same rules as Cole) and save it into today's page ----
-  const SORT_PROMPT = (txt, tb) => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades YM/MYM futures (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
+  const SORT_PROMPT = (txt, tb) => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
 Split this voice brain-dump into sectors. Keep his own words, lightly cleaned up; never invent facts.
 Brain-dump: """${txt}"""
 Return JSON only:

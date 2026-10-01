@@ -95,12 +95,15 @@
       const last10 = traded.slice(-10), disc = last10.length ? Math.round(100 * last10.filter(cleanOf).length / last10.length) : null;
       let streak = 0; for (const k of traded.slice().reverse()){ if (cleanOf(k)) streak++; else break; }
       const nT = ((today().trades) || []).length;
-      return `<h2>TRADING <em>MYM · YM · this week</em></h2><div class="sgrid">
+      const recent = traded.slice().reverse().flatMap(k => D[k].trades.slice().reverse().map(t => ({k, t}))).slice(0, 5);
+      const rLab = k => k === keyOf(new Date()) ? 'Today' : new Date(k + 'T12:00').toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'});
+      return `<h2>TRADING <em>DOW · NASDAQ · GOLD · this week</em></h2><div class="sgrid" style="grid-template-rows:auto auto">
         <div class="scard"><div class="k">Week P&amp;L</div><div class="big ${tot > 0 ? 'up' : tot < 0 ? 'down' : ''}" style="margin-top:8px">${tot > 0 ? '+' : ''}${money(tot)}</div>
           <div class="wbars">${wk.map(x => `<div><div class="c"><i class="${x.pnl >= 0 ? 'u' : 'd'}" data-h="${x.t.length ? Math.max(3, Math.abs(x.pnl) / max * 50) : 0}" style="height:0"></i></div><span style="color:var(--hi)">${x.t.length ? money(x.pnl) : '·'}</span><span>${x.lab}${x.clean === true ? ' ✓' : x.clean === false ? ' ✕' : ''}</span></div>`).join('')}</div></div>
         <div class="scard"><div class="k">Discipline</div><div class="ring">${ringSvg(disc || 0, 100, 'fg', disc == null ? '—' : disc + '%', 'LAST 10 DAYS')}
           <div><div class="big" style="font-size:30px">${streak}</div><div style="color:var(--mute);margin-top:6px">clean days in a row</div>
-          <div class="big" style="font-size:30px;margin-top:14px">${nT}/2</div><div style="color:var(--mute);margin-top:6px">trades today</div></div></div></div></div>`;
+          <div class="big" style="font-size:30px;margin-top:14px">${nT}/2</div><div style="color:var(--mute);margin-top:6px">trades today</div></div></div></div>
+        <div class="scard" style="grid-column:1/-1"><div class="k">Trade log · latest</div><ul class="slist" style="margin-top:8px">${recent.length ? recent.map(({k, t}) => { const ok = RULES.every(r => t.rules && t.rules[r]), has = t.pnl !== '' && t.pnl !== undefined; return `<li><span>${rLab(k)} · ${esc(t.dir || '?')} ${esc(t.qty || 1)} ${esc(t.contract || '')}${ok ? '' : ' <b style="color:var(--red)">✕ rule</b>'}</span><span style="color:${has ? (+t.pnl < 0 ? 'var(--red)' : 'var(--good)') : 'var(--mute)'}">${has ? (+t.pnl > 0 ? '+' : '') + money(+t.pnl) : 'open'}</span></li>`; }).join('') : '<li class="none">No trades logged yet</li>'}</ul></div></div>`;
     }},
     {id:'money', name:'Money', html:() => {
       const fin = window.JV_finance;       // bank balances plug in here once a source is linked

@@ -501,7 +501,7 @@ function vTrade(){
       ${nT>=2?`<div class="banner bad"><div><strong>Limit reached</strong>You've taken 2 trades. Close the platform. Anything else is overtrading.</div></div>`:""}
       ${ll?`<div class="banner bad"><div><strong>Walk-away timer: ${Math.floor(ll/60)}:${pad(ll%60)}</strong>Next trade only from a plan level.</div></div>`:""}
       <div class="row">
-        <div class="seg" style="flex:1" data-seg="contract">${["MYM","YM"].map(c=>`<button aria-pressed="${ui.contract===c}" data-v="${c}">${c}</button>`).join("")}</div>
+        <div class="seg" style="flex:1 1 100%;flex-wrap:wrap" data-seg="contract">${["MYM","YM","MNQ","NQ","MGC","GC"].map(c=>`<button aria-pressed="${ui.contract===c}" data-v="${c}">${c}</button>`).join("")}</div>
         <div class="seg" style="flex:1" data-seg="dir">${["LONG","SHORT"].map(c=>`<button aria-pressed="${ui.dir===c}" data-v="${c}">${c}</button>`).join("")}</div>
       </div>
       <div class="row">
@@ -514,7 +514,7 @@ function vTrade(){
       <button class="btn" data-act="logTrade" ${locked?"disabled":""}>${nT>=2?"Done for today":ll?"Wait for the timer":"Log trade"}</button>
     </div>`;
   const list = d.trades.length?`<div class="card">${d.trades.map((t,i)=>`
-    <div class="item"><div><strong>${t.dir} ${t.qty} ${t.contract}</strong> <span class="pill ${tradeClean(t)?"good":"bad"}">${tradeClean(t)?"clean":"rule broken"}</span>${t.note?`<div class="muted">${esc(t.note)}</div>`:""}</div>
+    <div class="item"><div><strong>${t.dir||"?"} ${t.qty} ${t.contract}</strong> <span class="pill ${tradeClean(t)?"good":"bad"}">${tradeClean(t)?"clean":"rule broken"}</span>${t.note?`<div class="muted">${esc(t.note)}</div>`:""}</div>
     <div class="row" style="align-items:center;flex-wrap:nowrap"><span class="mono" style="color:${(+t.pnl||0)<0?"var(--bad)":"var(--good)"}">${t.pnl!==""?money(+t.pnl):""}${t.r!==""?` · ${t.r}R`:""}</span><button class="x" data-del-trade="${i}" aria-label="Delete trade">×</button></div></div>`).join("")}</div>`:"";
   const wk=Object.keys(days).filter(k=>days[k].trades.length).sort().slice(-20);
   const cleanPnl=sum(wk.filter(k=>dayClean(days[k])).flatMap(k=>days[k].trades),"pnl");
@@ -524,6 +524,7 @@ function vTrade(){
   ${d.journal.filter(j=>j.tag==="trading").length?`<div class="eyebrow">Mindset notes today</div><div class="gap">${d.journal.filter(j=>j.tag==="trading").map(j=>`<div class="entry"><div class="when">${new Date(j.at).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</div>${esc(j.text)}</div>`).join("")}</div>`:""}
   <div class="eyebrow">Session</div>${form}
   ${list?`<div class="eyebrow">Today's trades</div>${list}`:""}
+  ${tradeLogCard()}
   <button class="task" data-act="openReview" style="margin-top:14px"><span class="chk">★</span><span><span class="t">Weekly review</span><br><span class="s">Discipline score, rules broken, headspace</span></span><span class="go">open ›</span></button>
   ${evalCard()}
   <div class="eyebrow">What discipline is worth (last 20 trading days)</div>
@@ -711,7 +712,7 @@ async function coachReview(){
   ui.revBusy=true;ui.revErr="";render();
   try{
     const r=reviewData();
-    const out=await sample(`You are Cole, Nick's accountability coach. Nick is a Mercedes tech who day trades YM/MYM futures with rules (max 2 trades/day, no revenge, no oversizing, no FOMO, trade only 9:30-10:30), is on a lean bulk, and wants to support his family through trading. Be direct and specific, no fluff, no trade picks or financial advice. Here is his week as JSON: ${JSON.stringify(r)}. Write 3 short parts: "The pattern:" (1-2 sentences), "What it cost:" (1-2 sentences using the numbers), "One fix for next week:" (one concrete action). If data is thin, say what to log more of.`,{modelTier:"default"});
+    const out=await sample(`You are Cole, Nick's accountability coach. Nick is a Mercedes tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) with rules (max 2 trades/day, no revenge, no oversizing, no FOMO, trade only 9:30-10:30), is on a lean bulk, and wants to support his family through trading. Be direct and specific, no fluff, no trade picks or financial advice. Here is his week as JSON: ${JSON.stringify(r)}. Write 3 short parts: "The pattern:" (1-2 sentences), "What it cost:" (1-2 sentences using the numbers), "One fix for next week:" (one concrete action). If data is thin, say what to log more of.`,{modelTier:"default"});
     ui.revText=out.text;
   }catch(e){ui.revErr=aiErr(e,"Couldn't get a read right now. Try again in a minute.")}
   ui.revBusy=false;render();
@@ -740,7 +741,8 @@ function pipelineCard(){
    today's Cole page (days/<date>.trades) — the same trade log Cole's Trade tab uses. */
 const COLE_TRADES = (() => {
   const KEYS = ['plan','size','noRevenge','noFomo','window'];
-  const PER_PT = {YM:5, MYM:0.5};
+  const PER_PT = {MYM:0.5, YM:5, MNQ:2, NQ:20, MGC:10, GC:100};   // $ per point per contract
+  const CONTRACTS = Object.keys(PER_PT);
   const num = v => (v === null || v === undefined || v === '' || isNaN(+v)) ? '' : +v;
   const summary = (t, i) => `#${i}: ${t.dir || '?'} ${t.qty || 1} ${t.contract || '?'}, result ${t.pnl !== '' && t.pnl !== undefined ? '$' + t.pnl : 'not logged yet'}${t.note ? ', "' + String(t.note).slice(0, 60) + '"' : ''}`;
   // extra JSON field + rules appended to the sort prompt
@@ -748,8 +750,8 @@ const COLE_TRADES = (() => {
     const now = new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/New_York'});
     const list = (existing || []).map(summary).join('; ') || 'none';
     return {
-      schema: `"trades":[{"existing":int|null,"contract":"MYM|YM","dir":"LONG|SHORT","qty":int,"pnl":number|null,"r":number|null,"note":string,"rules":{"plan":bool,"size":bool,"noRevenge":bool,"noFomo":bool,"window":bool}}]`,
-      rules: `trades: ONLY real trades he says he actually entered today on his live or funded account ("took a short", "got long 2 MYM", "entered at 42,100", "stopped out", "closed it for 40 points"). NOT backtests, replay or sim, NOT setups he watched, planned, wanted or almost took, NOT trades from other days. Trades already logged today: ${list}. If he's adding to one of those (closing it, its result, how it went), set existing to its # and fill only what he said; otherwise existing null. Never log the same trade twice. contract: MYM or YM as said, else MYM. dir from long/short/buy/sell. qty: contracts, default 1. pnl: dollar result (negative for a loss) if he says it; if he gives points, pnl = points x qty x $5 for YM or $0.50 for MYM; null if unknown or still open. r: R multiple if he says it, else null. note: why he took it / what he felt, in his words. rules: true unless what he said shows it was broken: plan false if off his plan or impulsive (his plan today: ${plan ? '"' + String(plan).slice(0, 200) + '"' : 'none written'}); size false if more contracts than planned or he says oversized; noRevenge false if he was trying to win back a loss; noFomo false if chasing; window false if entered outside 9:30-10:30 ET (use the entry time he says, else now: ${now} ET). The trade itself goes in trades; only his mindset about it also goes in journal.`
+      schema: `"trades":[{"existing":int|null,"contract":"MYM|YM|MNQ|NQ|MGC|GC","dir":"LONG|SHORT","qty":int,"pnl":number|null,"r":number|null,"note":string,"rules":{"plan":bool,"size":bool,"noRevenge":bool,"noFomo":bool,"window":bool}}]`,
+      rules: `trades: ONLY real trades he says he actually entered today on his live or funded account ("took a short", "got long 2 MYM", "entered at 42,100", "stopped out", "closed it for 40 points"). NOT backtests, replay or sim, NOT setups he watched, planned, wanted or almost took, NOT trades from other days. Trades already logged today: ${list}. If he's adding to one of those (closing it, its result, how it went), set existing to its # and fill only what he said; otherwise existing null. Never log the same trade twice. contract: Dow = YM (micro Dow = MYM), Nasdaq = NQ (micro Nasdaq = MNQ), gold = GC (micro gold = MGC); if he doesn't name the market, use the one in his plan, else MYM. dir from long/short/buy/sell, "" if he didn't say. qty: contracts, default 1. pnl: dollar result (negative for a loss) if he says it; if he gives points or ticks, pnl = points x qty x dollars per point (MYM $0.50, YM $5, MNQ $2, NQ $20, MGC $10, GC $100); null if unknown or still open. r: R multiple if he says it, else null. note: why he took it / what he felt, in his words. rules: true unless what he said shows it was broken: plan false if off his plan or impulsive (his plan today: ${plan ? '"' + String(plan).slice(0, 200) + '"' : 'none written'}); size false if more contracts than planned or he says oversized; noRevenge false if he was trying to win back a loss; noFomo false if chasing; window false if entered outside 9:30-10:30 ET (use the entry time he says, else now: ${now} ET). The trade itself goes in trades; only his mindset about it also goes in journal.`
     };
   }
   // validate the model's trades
@@ -757,12 +759,13 @@ const COLE_TRADES = (() => {
     const n = (existing || []).length;
     return (Array.isArray(arr) ? arr : []).filter(t => t && typeof t === 'object').map(t => {
       const ex = Number.isInteger(+t.existing) && t.existing !== null && t.existing !== '' && +t.existing >= 0 && +t.existing < n ? +t.existing : null;
-      const contract = String(t.contract || '').toUpperCase() === 'YM' ? 'YM' : 'MYM';
+      const c = String(t.contract || '').toUpperCase().replace(/[^A-Z]/g, '');
+      const contract = CONTRACTS.includes(c) ? c : /NASDAQ|NAS|NQ/.test(c) ? (/MICRO|^M/.test(c) ? 'MNQ' : 'NQ') : /GOLD|GC/.test(c) ? (/MICRO|^M/.test(c) ? 'MGC' : 'GC') : /^YM$|DOW/.test(c) ? 'YM' : 'MYM';
       const d = String(t.dir || '').toUpperCase();
       const dir = /SHORT|SELL/.test(d) ? 'SHORT' : /LONG|BUY/.test(d) ? 'LONG' : '';
       const rules = {}; KEYS.forEach(k => rules[k] = !(t.rules && t.rules[k] === false));
       return {existing:ex, contract, dir, qty:Math.max(1, Math.round(+t.qty || 1)), pnl:num(t.pnl), r:num(t.r), note:String(t.note || '').slice(0, 300), rules};
-    }).filter(t => t.existing !== null || t.dir);   // a new trade needs a direction
+    }).filter(t => t.existing !== null || t.dir || t.pnl !== '' || t.r !== '' || t.note);   // drop empty junk
   }
   // write into a Cole day doc
   function apply(d, list, at, via){
@@ -786,8 +789,22 @@ const COLE_TRADES = (() => {
     return done;
   }
   const broken = t => KEYS.filter(k => !(t.rules && t.rules[k]));
-  return {KEYS, prompt, clean, apply, broken, summary};
+  return {KEYS, CONTRACTS, PER_PT, prompt, clean, apply, broken, summary};
 })();
+// ---- full trade log: every trade from Cole, Spikey and voice notes, newest first ----
+function tradeLogCard(){
+  const ks=Object.keys(days).filter(k=>k!==TODAY&&(days[k].trades||[]).length).sort().reverse();
+  const f=ui.logMkt||"All", mk=t=>({MYM:"Dow",YM:"Dow",MNQ:"Nasdaq",NQ:"Nasdaq",MGC:"Gold",GC:"Gold"})[t.contract]||"Dow";
+  const rows=ks.map(k=>({k,tr:days[k].trades.map((t,i)=>({t,i})).filter(x=>f==="All"||mk(x.t)===f)})).filter(x=>x.tr.length).slice(0,ui.logAll?60:10);
+  const all=ks.flatMap(k=>days[k].trades).filter(t=>f==="All"||mk(t)===f), tot=sum(all,"pnl"), cl=all.filter(tradeClean).length;
+  return `<div class="eyebrow">Trade log</div>
+  <div class="seg" data-seg="logMkt" style="margin-bottom:8px">${["All","Dow","Nasdaq","Gold"].map(c=>`<button aria-pressed="${f===c}" data-v="${c}">${c}</button>`).join("")}</div>
+  ${rows.length?`<div class="muted" style="margin-bottom:6px">${all.length} trade${all.length===1?"":"s"} before today · <span class="mono" style="color:${tot<0?"var(--bad)":"var(--good)"}">${money(tot)}</span> · ${cl}/${all.length} clean</div>
+  <div class="card">${rows.map(({k,tr})=>`<div class="when" style="margin-top:6px">${new Date(k+"T12:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}</div>${tr.map(({t,i})=>`
+    <div class="item"><div><strong>${t.dir||"?"} ${t.qty||1} ${t.contract||""}</strong> <span class="pill ${tradeClean(t)?"good":"bad"}">${tradeClean(t)?"clean":"rule broken"}</span>${t.via&&t.via!=="cole"?` <span class="pill">${t.via==="spikey"?"Spikey":"note"}</span>`:""}${t.note?`<div class="muted">${esc(t.note)}</div>`:""}</div>
+    <div class="row" style="align-items:center;flex-wrap:nowrap"><span class="mono" style="color:${(+t.pnl||0)<0?"var(--bad)":"var(--good)"}">${t.pnl!==""&&t.pnl!==undefined?money(+t.pnl):"—"}${t.r!==""&&t.r!==undefined?` · ${t.r}R`:""}</span><button class="x" data-del-old="${k}:${i}" aria-label="Delete trade">×</button></div></div>`).join("")}`).join("")}</div>
+  ${ks.length>10&&!ui.logAll?`<button class="btn ghost" data-act="logAll">Show older trades</button>`:""}`:`<div class="muted">No earlier trades${f!=="All"?" on "+f:""} yet. Trades you tell Spikey or Cole about land here.</div>`}`;
+}
 const SECTORS={trading:"Trading mindset",journal:"Journal",family:"Family",business:"Business & content",fitness:"Fitness"};
 function vDump(){
   const r=ui.dump;
@@ -844,7 +861,7 @@ async function sortDump(){
   ui.dumpBusy=true;ui.dumpErr="";ui.dumpRaw=txt;render();
   try{
     const d0=day(),tb=COLE_TRADES.prompt(d0.trades,d0.checkin&&d0.checkin.plan);
-    const out=await sample.json(`You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades YM/MYM futures (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
+    const out=await sample.json(`You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
 Split this voice brain-dump into sectors. Keep his own words, lightly cleaned up; never invent facts.
 Brain-dump: """${txt}"""
 Return JSON only:
@@ -928,6 +945,8 @@ document.getElementById("view").addEventListener("click",async e=>{
   if(t.dataset.delreel){pipe.reels=pipe.reels.filter(x=>x.id!==t.dataset.delreel);savePipe();return render()}
   if(t.dataset.topipe){const [k,i]=t.dataset.topipe.split(":"),idea=days[k].ideas[+i];pipe.reels.push({id:"r"+Date.now(),title:idea.text.slice(0,120),track:TRACKS[0],stage:"Idea",at:Date.now()});idea.piped=true;save(k);savePipe();return render()}
   if(t.dataset.delMeal){d.meals.splice(+t.dataset.delMeal,1);save();return render()}
+  if(t.dataset.delOld){const [k,i]=t.dataset.delOld.split(":");if(days[k]&&confirm("Delete this trade from your log?")){days[k].trades.splice(+i,1);save(k)}return render()}
+  if(t.dataset.act==="logAll"){ui.logAll=true;return render()}
   if(t.dataset.delTrade){d.trades.splice(+t.dataset.delTrade,1);save();return render()}
   const a=t.dataset.act;
   if(a==="saveCheckin"){d.checkin={sleep:ui.sleep,mood:ui.mood,feel:ui.feel,plan:(document.getElementById("ciPlan")||{}).value||"",noTrade:false,at:Date.now()};save();render()}
