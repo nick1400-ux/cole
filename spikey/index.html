@@ -990,13 +990,25 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     if (status === 403) return 'Spotify refused: ' + (msg || reason || 'forbidden') + '.';
     return 'Spotify error ' + status + ': ' + (msg || reason);
   }
-  async function device(){
+  // Spikey lives on the laptop, so music goes to THIS computer's Spotify app (not a phone/TV that happens
+  // to be "active"), unless Nick asks for another device by name
+  let lastDevice = null, preferName = get('preferDevice');
+  async function device(opts = {}){
     let {devices} = await api('/me/player/devices');
-    let d = devices.find(x => x.is_active) || devices.find(x => x.type === 'Computer') || devices[0];
+    const pick = list => (preferName && list.find(x => x.name.toLowerCase().includes(preferName.toLowerCase())))
+      || list.find(x => x.type === 'Computer' && x.is_active) || list.find(x => x.type === 'Computer') || null;
+    let d = pick(devices);
     if (!d){
       location.href = 'spotify:';                         // open the Spotify desktop app, then wait for it to show up
-      for (let i = 0; i < 8 && !d; i++){ await sleep(1500); ({devices} = await api('/me/player/devices')); d = devices.find(x => x.type === 'Computer') || devices[0]; }
+      for (let i = 0; i < 10 && !d; i++){ await sleep(1500); ({devices} = await api('/me/player/devices')); d = pick(devices); }
     }
+    if (!d) d = devices.find(x => x.is_active) || devices[0] || null;   // last resort: whatever Spotify has
+    // music is going somewhere else (phone, TV, web player): move it here
+    const active = devices.find(x => x.is_active);
+    if (d && active && active.id !== d.id && opts.transfer !== false){
+      try{ await api('/me/player', {method:'PUT', body:JSON.stringify({device_ids:[d.id], play:true})}); await sleep(600); }catch{}
+    }
+    lastDevice = d;
     return d || null;
   }
 
@@ -1031,7 +1043,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
       await api('/me/player/play?device_id=' + encodeURIComponent(d.id), {method:'PUT', body:JSON.stringify(body)});
       const who = item.artists ? ' by ' + item.artists.map(a => a.name).join(', ') : (item.owner ? ' from ' + item.owner.display_name : '');
       setTimeout(nowPlaying, 1500);
-      return {ok:true, message:`Playing ${item.name}${who}.`, device:d.name};
+      return {ok:true, message:`Playing ${item.name}${who}${d.type === 'Computer' ? '' : ' on ' + d.name}.`, device:d.name};
     },
     async control(action, value){
       const d = await device(); const q = d ? '?device_id=' + encodeURIComponent(d.id) : '';
@@ -1045,10 +1057,26 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
       return {ok:true};
     },
     lastError: () => get('lastError'),
+    lastDevice: () => lastDevice && lastDevice.name,
+    async devices(){ const {devices} = await api('/me/player/devices'); return devices.map(d => ({name:d.name, type:d.type, active:d.is_active, volume:d.volume_percent})); },
+    async moveTo(name){
+      const {devices} = await api('/me/player/devices');
+      const want = String(name || '').toLowerCase();
+      const d = /laptop|computer|pc|here|this/.test(want) ? devices.find(x => x.type === 'Computer') : devices.find(x => x.name.toLowerCase().includes(want) || x.type.toLowerCase() === want || (want.includes('phone') && x.type === 'Smartphone'));
+      if (!d) return 'I don\'t see that device. Spotify sees: ' + (devices.map(x => x.name).join(', ') || 'nothing') + '.';
+      put('preferDevice', d.type === 'Computer' ? '' : d.name); preferName = get('preferDevice');
+      await api('/me/player', {method:'PUT', body:JSON.stringify({device_ids:[d.id], play:true})});
+      setTimeout(nowPlaying, 1500);
+      return 'Music is on ' + d.name + ' now.';
+    },
+    async where(){
+      const {devices} = await api('/me/player/devices'); const a = devices.find(x => x.is_active);
+      return a ? `Spotify is playing on ${a.name}${a.volume_percent != null ? ' at volume ' + a.volume_percent : ''}.` : 'Spotify is not playing on any device right now.';
+    },
     async current(){
-      const j = await api('/me/player/currently-playing');
+      const j = await api('/me/player');
       if (!j || !j.item) return null;
-      return {name:j.item.name, artist:(j.item.artists || []).map(a => a.name).join(', '), playing:j.is_playing, art:(j.item.album && j.item.album.images[1] || j.item.album.images[0] || {}).url};
+      return {device:j.device && j.device.name, dtype:j.device && j.device.type, vol:j.device && j.device.volume_percent, name:j.item.name, artist:(j.item.artists || []).map(a => a.name).join(', '), playing:j.is_playing, art:(j.item.album && j.item.album.images[1] || j.item.album.images[0] || {}).url};
     }
   };
 
@@ -1059,7 +1087,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     const emb = $('spotifyMain'); if (emb) emb.style.display = 'none';
     box.style.display = 'flex';
     box.innerHTML = c
-      ? `<img src="${c.art || ''}" alt=""><div class="np"><b>${c.name.replace(/</g,'&lt;')}</b><span>${c.artist.replace(/</g,'&lt;')}</span>
+      ? `<img src="${c.art || ''}" alt=""><div class="np"><b>${c.name.replace(/</g,'&lt;')}</b><span>${c.artist.replace(/</g,'&lt;')}</span>${c.device ? `<span style="font-size:11px;color:${c.dtype === 'Computer' ? 'var(--mute)' : 'var(--a)'}">🔊 ${c.device.replace(/</g,'&lt;')}${c.vol != null ? ' · ' + c.vol + '%' : ''}</span>` : ''}
          <div class="npc"><button data-sp="previous">⏮</button><button data-sp="${c.playing ? 'pause' : 'resume'}">${c.playing ? '⏸' : '▶'}</button><button data-sp="next">⏭</button></div></div>`
       : `<div class="np"><b>Spotify connected</b><span>Say “Spikey, play …”</span></div>`;
     box.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => window.JV_spotify.control(b.dataset.sp).catch(() => {}));
@@ -1111,6 +1139,8 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
   const TOOLS = [
     {type:'web_search_20250305', name:'web_search', max_uses:3},
     {name:'play_spotify', description:'Play a song, artist, album or playlist on Nick\'s Spotify (Premium).', input_schema:{type:'object', properties:{query:{type:'string', description:'e.g. "Lose Yourself Eminem" or "techno bunker"'}, type:{type:'string', enum:['track','artist','album','playlist']}}, required:['query']}},
+    {name:'spotify_where', description:'Which device Spotify is playing on (and its volume), plus all devices Spotify sees. Use when Nick cannot hear the music.', input_schema:{type:'object', properties:{}}},
+    {name:'spotify_move', description:'Move Spotify playback to a device: "computer"/"laptop" or a device name like phone, TV.', input_schema:{type:'object', properties:{device:{type:'string'}}, required:['device']}},
     {name:'spotify_control', description:'Pause, resume, skip, go back, set volume (0-100) or shuffle on Spotify.', input_schema:{type:'object', properties:{action:{type:'string', enum:['pause','resume','next','previous','volume','shuffle']}, value:{type:'number'}}, required:['action']}},
     {name:'open_youtube', description:'Open YouTube search results in Chrome. To PLAY a specific video, find its youtube.com/watch URL with web_search and use open_screen so it plays inside Spikey.', input_schema:{type:'object', properties:{query:{type:'string'}}, required:['query']}},
     {name:'open_tradingview', description:'Open a TradingView chart. Futures use TradingView symbols like CME_MINI:NQ1!, CBOT_MINI:YM1!, CBOT_MINI:MYM1!, COMEX:GC1!, CME_MINI:ES1!.', input_schema:{type:'object', properties:{symbol:{type:'string'}}, required:['symbol']}},
@@ -1143,6 +1173,8 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
           if (window.JV_spotify && window.JV_spotify.connected()) return (await window.JV_spotify.play(input.query, input.type || 'track')).message;
           location.href = 'spotify:search:' + encodeURIComponent(input.query);
           return 'Spotify is not connected in Spikey Setup yet, so I opened the search in the Spotify app instead of playing it.';
+        case 'spotify_where': return (await window.JV_spotify.where()) + ' Devices: ' + JSON.stringify(await window.JV_spotify.devices());
+        case 'spotify_move': return await window.JV_spotify.moveTo(input.device);
         case 'spotify_control':
           if (!(window.JV_spotify && window.JV_spotify.connected())) return 'Spotify is not connected in Setup.';
           await window.JV_spotify.control(input.action, input.value); return 'Done.';
@@ -1764,7 +1796,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
       }
     }
     // --- music: fast path straight to Spotify ---
-    if ((m = clean.match(/^(?:play|put on|throw on)\s+(.+?)(?:\s+on spotify)?$/i)) && window.JV_spotify && window.JV_spotify.connected() && !/youtube/i.test(clean)){
+    if ((m = clean.match(/^(?:play|put on|throw on)\s+(.+?)(?:\s+on spotify)?$/i)) && window.JV_spotify && window.JV_spotify.connected() && !/youtube/i.test(clean) && !/^play (it|the music|music|spotify) on\b/i.test(clean)){
       try{ return say((await window.JV_spotify.play(m[1], /\bplaylist\b/i.test(m[1]) ? 'playlist' : 'track')).message); }catch(e){ if (!brainOn) return say("Spotify didn't respond. " + (e.message || '')); }
     }
     if (window.JV_spotify && window.JV_spotify.connected()){
@@ -1774,6 +1806,18 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
         : /^(resume|unpause|keep playing|play)( (it|the|music|song|spotify|the music))*$/.test(t2) ? 'resume'
         : /^((go )?back|previous|last|play the last|play the previous)( (song|track|one))?$|^(previous|last) (song|track)$/.test(t2) ? 'previous' : null;
       if (sp){ try{ await window.JV_spotify.control(sp); return; }catch(e){ return say(e.message || "Spotify didn't respond."); } }
+      if (/^(where('?s| is) (the )?(music|spotify|it) playing|what device is (spotify|the music|it) (playing )?on|which (device|speaker))$|can'?t hear|cannot hear|don'?t hear|no sound|hear (any|the|no) ?(music|spotify|nothing)/.test(text)){
+        try{
+          const w = await window.JV_spotify.where(), list = await window.JV_spotify.devices();
+          const act = list.find(d => d.active);
+          if (/can'?t|cannot|don'?t|no sound|hear/.test(text) && act && act.type !== 'Computer'){ const r = await window.JV_spotify.moveTo('computer'); return say(w + ' ' + r); }
+          if (/can'?t|cannot|don'?t|no sound|hear/.test(text) && act && act.volume === 0){ await window.JV_spotify.control('volume', 70); return say(w + ' Its volume was at zero, so I turned it up.'); }
+          return say(w + (/can'?t|cannot|don'?t|no sound|hear/.test(text) ? ' Spotify is sending sound to this computer, so check the laptop volume or which speaker Windows is using.' : ''));
+        }catch(e){ return say(e.message); }
+      }
+      if ((m = text.match(/^(?:play (?:it |the music |music |spotify )?on|move (?:it|the music|spotify) to|switch (?:it|the music|spotify) to|put (?:it|the music) on) (?:my |the )?(.+)$/))){
+        try{ return say(await window.JV_spotify.moveTo(m[1])); }catch(e){ return say(e.message); }
+      }
       if (/^(reconnect|re connect|relink|log ?in to|connect) spotify$/.test(text)){ say('Reconnecting Spotify.'); setTimeout(() => window.JV_spotify.login().catch(() => {}), 1200); return; }
     }
     // --- websites: exact names open instantly ---
