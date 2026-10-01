@@ -638,7 +638,7 @@ Return JSON only:
  "flags":["gym"|"reel"|"family"]}
 Rules: trade mindset, emotions and trade recaps go in journal with tag "trading". Food eaten goes in meals with estimated macros (typical chain values if named); if a price was said for food put it in that meal's cost, NOT in spend. Non-food purchases go in spend. flags only for things he says he already did today (worked out, posted a reel, spent time with my brothers & sister). Empty arrays when nothing fits.`;
   window.JV_coleLog = async (txt, askJSON) => {
-    if (!sb || !uid) return {ok:false, message:"Cole isn't signed in on Spikey yet. Tap Cole, sign in, on the P and L panel."};
+    if (!sb || !uid) return {ok:false, message:"Cole is still connecting. Say it again in a few seconds and I will save it."};
     const A = v => Array.isArray(v) ? v : [];
     const out = await askJSON(SORT_PROMPT(txt));
     const TAGS = ['trading','journal','family','business','fitness'];
@@ -1101,7 +1101,8 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. Use when he says log, journal, note, tell Cole, or describes his trades, food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
     {name:'get_trading_week', description:'Nick\'s P&L this week from Cole, by day, with which trading rules he broke.', input_schema:{type:'object', properties:{}}},
     {name:'get_todos', description:'Nick\'s open objectives (the same list as his Cole to-dos).', input_schema:{type:'object', properties:{}}},
-    {name:'read_cole', description:'Read Nick\'s Cole pages for a date range: journal entries (tagged trading, family, business, fitness), trades with rules broken, meals with macros, ideas, spending, to-dos and habits. Use for anything about what he wrote, ate, spent, planned or felt on a day or over a period.', input_schema:{type:'object', properties:{from:{type:'string', description:'YYYY-MM-DD'}, to:{type:'string', description:'YYYY-MM-DD'}, sections:{type:'array', items:{type:'string', enum:['journal','trades','meals','ideas','spend','tasks','habits']}}}, required:['from','to']}},
+    {name:'read_cole', description:'Read Nick\'s Cole pages for a date range: journal entries (tagged trading, family, business, fitness), trades with rules broken, meals with macros, ideas, spending, to-dos and habits. Use for anything about what he wrote, ate, spent, planned or felt on a day or over a period.', input_schema:{type:'object', properties:{from:{type:'string', description:'YYYY-MM-DD'}, to:{type:'string', description:'YYYY-MM-DD'}, sections:{type:'array', items:{type:'string', enum:['journal','trades','meals','ideas','spend','tasks','habits']}}}}},
+    {name:'show_journal', description:'Open the Journal screen with ALL of Nick\'s journal entries grouped into their categories (trading, personal, family, business, fitness, ideas), and get them back as text. Use whenever he asks for journal entries or what he journaled.', input_schema:{type:'object', properties:{range:{type:'string', enum:['today','week','month','all']}}}},
     {name:'learn', description:'Permanently change how you behave. Use kind "rule" when Nick corrects you, states a preference, or says always / never / next time / from now on / remember that (store one short, clear instruction in your own words). Use kind "shortcut" when he defines a voice phrase that should trigger an action ("when I say game time, play my trading playlist and show the trading slide").', input_schema:{type:'object', properties:{kind:{type:'string', enum:['rule','shortcut']}, text:{type:'string', description:'the rule, for kind rule'}, phrase:{type:'string', description:'the trigger phrase, for kind shortcut'}, command:{type:'string', description:'what to do, written as a command Nick could say to you, for kind shortcut'}}, required:['kind']}},
     {name:'forget_learned', description:'Remove a rule or shortcut you learned earlier, when Nick asks you to forget or stop doing it.', input_schema:{type:'object', properties:{query:{type:'string'}}, required:['query']}}
   ];
@@ -1139,11 +1140,17 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
         case 'add_task': window.JV_tasks.add(input.text); return 'Added.';
         case 'complete_task': return window.JV_tasks.complete(input.number);
         case 'log_to_cole': return (await window.JV_coleLog(input.text, askJSON)).message;
-        case 'get_trading_week': return (window.JV_pnlBreakdown && window.JV_pnlBreakdown()) || 'Cole is not signed in on Spikey, so I cannot see trades.';
+        case 'get_trading_week': return (window.JV_pnlBreakdown && window.JV_pnlBreakdown()) || 'Cole data is still loading; try again shortly. Do not ask Nick to open or sign in to anything.';
         case 'get_todos': return JSON.stringify({objectives:window.JV_tasks.list(), cole_signed_in:!!(window.JV_coleSignedIn && window.JV_coleSignedIn())});
+        case 'show_journal': {
+          const J = window.JV_journal; if (!J) return 'Journal screen not available.';
+          J.show(input.range || 'all');
+          const t = JSON.stringify(J.text(...J.rangeOf(input.range || 'all')));
+          return 'Journal screen is open, grouped by category. Entries: ' + t.slice(0, 12000);
+        }
         case 'read_cole': {
           const r = window.JV_coleRead && window.JV_coleRead(input.from, input.to, input.sections);
-          if (!r) return 'Cole is not signed in on Spikey.';
+          if (!r) return 'Cole data is still loading. Try again in a few seconds; do not ask Nick to open or sign in to anything.';
           const t = JSON.stringify(r); return t === '{}' ? 'Nothing logged in Cole for those dates.' : t.slice(0, 12000);
         }
         case 'learn': {
@@ -1160,7 +1167,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     const now = new Date();
     return `You are Spikey, Nick's personal voice assistant, running on his laptop dashboard. Sledge B is his brand ("by outcasts for outcasts"). Nick is a Miami Mercedes-Benz technician who day trades MYM/YM futures with strict rules (max 2 trades a day, no revenge trades, no oversizing, no FOMO, trade only 9:30 to 10:30 ET) and runs Sledge B events and content.
 Your replies are SPOKEN ALOUD. Keep them to 1 to 3 short sentences, casual and direct, no markdown, no lists, no emojis, never read out URLs. Say numbers naturally.
-Cole is Nick's other app and part of the same personal assistant as you: his Cole to-dos are your objectives, and his Cole journal, meals, trades, ideas and spending are yours to read with read_cole. Today's date is ${(d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'))(now)}.
+Cole is Nick's other app and you and Cole are ONE personal assistant with one shared memory: his Cole to-dos are your objectives, everything in Cole (journal, meals, trades, ideas, spending, habits) is yours, and everything you record (objectives, backtests, what you learn) goes into Cole. Never ask Nick to open Cole, sign in, share or give access to his data, and never ask permission to look; just read it with your tools and answer. When he asks for journal entries, use show_journal and give him all of them organized by category, not just one day or one type. Today's date is ${(d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'))(now)}.
 You keep improving: whenever Nick corrects you, tells you how he wants something done, or says always, never, next time or from now on, call the learn tool so you remember it permanently, then confirm briefly.
 Use your tools to act: play music on Spotify, open YouTube, TradingView or websites, show charts, manage objectives, log things into Cole, and look up his trading week and to-dos. Use web_search for anything current (news, prices, scores, weather elsewhere, facts you are unsure of).
 Never give specific trade calls or financial advice. If he's clearly about to break a trading rule, remind him.
@@ -1448,8 +1455,34 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
 
   let talkTimer = null, lastSpokeEnd = 0;
   window.JV_say = t => say(t);
+  // ---------- barge-in: "stop" while Spikey is talking cuts it off ----------
+  let curDone = null, curText = '', hushUntil = 0, dropReply = false;
+  const STOP_TAIL = /(?:^|\s)(stop|stop talking|stop it|shut up|be quiet|quiet|enough|that'?s enough|cancel|hold on|hold up|okay okay|all right all right)( spikey| spiky| please| now)?$/i;
+  function stopTalking(why){
+    hushUntil = Date.now() + 1200;                  // swallow the rest of a multi-part answer (like the briefing)
+    try{ speechSynthesis.cancel(); }catch{}
+    if (curDone) curDone();
+    set('reply', '');
+    D.lastStop = why || 'stop';
+    setMode('idle', 'STOPPED');
+    if (typeof openConvo === 'function') openConvo();   // still listening for what he says next
+  }
+  // is this transcript Nick telling Spikey to stop (and not Spikey hearing its own voice)?
+  function heardStop(t){
+    t = String(t || '').toLowerCase().replace(/[.,!?]/g, '').trim();
+    const m = t.match(STOP_TAIL); if (!m) return false;
+    const word = m[1].split(' ')[0];
+    const named = WAKE.test(t);
+    if (!named && new RegExp('\\b' + word + '\\b', 'i').test(curText)) return t.split(/\s+/).length <= 2 && !curText.toLowerCase().trim().endsWith(word);
+    return true;
+  }
+  window.JV_stop = () => stopTalking('manual');
+
   function say(text){
+    if (Date.now() < hushUntil) return Promise.resolve();
+    if (dropReply){ dropReply = false; return Promise.resolve(); }
     set('reply', text);
+    curText = String(text);
     return new Promise(res => {
       if (!('speechSynthesis' in window)) return res();
       speechSynthesis.cancel();
@@ -1461,10 +1494,10 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
         talkTimer = setInterval(() => { JV.level = 0.35 + Math.random()*0.55; }, 70);
       };
       let finished = false;
-      const done = () => { if (finished) return; finished = true; clearTimeout(safety); lastSpokeEnd = Date.now(); JV.speaking = false; document.body.dataset.speaking = '0'; clearInterval(talkTimer); JV.level = 0; res(); };
+      const done = () => { if (finished) return; finished = true; curDone = null; clearTimeout(safety); lastSpokeEnd = Date.now(); JV.speaking = false; document.body.dataset.speaking = '0'; clearInterval(talkTimer); JV.level = 0; res(); };
       // Chrome sometimes never reports the end of an utterance: don't let Spikey get stuck "talking"
       const safety = setTimeout(done, 4000 + String(text).length * 90);
-      u.onend = done; u.onerror = done;
+      u.onend = done; u.onerror = done; curDone = done;
       try{ speechSynthesis.speak(u); }catch(e){ done(); }
     });
   }
@@ -1589,7 +1622,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     // --- weekly P&L ---
     if ((brief || !brainOn) && /\bp\s?(&|and|n)\s?l\b|\bpnl\b|profit|how('?s| is| am i)( my)? (week|trading|doing)|my week/.test(text)){
       const p = (window.JV_pnlBreakdown && window.JV_pnlBreakdown()) || (window.JV_pnlSentence && window.JV_pnlSentence());
-      return say(p || "Sign in to Cole on the P and L panel so I can see your trades.");
+      return say(p || "Your Cole numbers are still loading. Ask me again in a few seconds.");
     }
     // --- charts inside Spikey ---
     if (/^(close|hide|dismiss|minimi[sz]e) (the )?(big )?chart$/.test(text)){ if (window.JV_bigChart) window.JV_bigChart(false); return say('Chart closed.'); }
@@ -1603,6 +1636,16 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     if (/^(show|open|pull up|bring up|expand)( me)?( the| my)? (big |full )?chart$/.test(text)){
       if (window.JV_bigChart) window.JV_bigChart(true);
       return say('Chart is up.');
+    }
+    // --- journal: every entry, grouped by category, on its own screen ---
+    if (window.JV_journal){
+      const J = window.JV_journal;
+      if (/^(close|hide|exit)( the| my)? journals?( screen)?$/.test(text)){ J.hide(); return say('Journal closed.'); }
+      if (/\bjournal/.test(text) && !/^(log|journal that|add|write|put|save|note)\b/.test(text) && !/\b(log|add|write|save|put) (this|that|it)\b/.test(text)
+          && (brief || /\b(entries|entry|show|read|open|pull up|bring up|what('?s| is| did)|all)\b/.test(text))){
+        const r = /\btoday\b/.test(text) ? 'today' : /\bthis week|\bweek\b/.test(text) ? 'week' : /\bmonth\b/.test(text) ? 'month' : 'all';
+        return say(J.open(r));
+      }
     }
     // --- backtesting ---
     if (window.JV_backtest){
@@ -1766,6 +1809,19 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     };
     rec.onend = () => { bump('end'); recOn = false; if (rec) setTimeout(() => { try{ rec.start(); }catch{} }, 250); };
     rec.onresult = e => {
+      // barge-in: listen for "stop" even while Spikey is talking or thinking
+      if (JV.speaking || JV.mode === 'thinking'){
+        for (let i = e.resultIndex; i < e.results.length; i++){
+          const r = e.results[i];
+          for (let a = 0; a < r.length; a++){
+            if (heardStop(r[a].transcript)){
+              if (JV.speaking) stopTalking('voice');
+              else { dropReply = true; setMode('idle', 'CANCELLED'); }
+              return;
+            }
+          }
+        }
+      }
       if (JV.mode === 'thinking') return;
       bump('result');
       try{ D.lastText = e.results[e.results.length-1][0].transcript; }catch{}
@@ -1800,9 +1856,10 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
 
   // push-to-talk: Space (when not typing) or click the orb
   document.addEventListener('keydown', e => {
-    if (e.code === 'Space' && document.activeElement !== cmdBox){ e.preventDefault(); wake(); }
+    if (e.key === 'Escape' && JV.speaking){ stopTalking('esc'); return; }
+    if (e.code === 'Space' && document.activeElement !== cmdBox){ e.preventDefault(); if (JV.speaking) stopTalking('space'); wake(); }
   });
-  const orb = $('orb'); if (orb) orb.addEventListener('click', wake);
+  const orb = $('orb'); if (orb) orb.addEventListener('click', () => { if (JV.speaking) stopTalking('click'); else wake(); });
 
   // ---------- boot ----------
   async function boot(){
@@ -1988,7 +2045,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   .bt-row i{font-style:normal;font:500 11px var(--f-mono);padding:4px 7px;border-radius:5px;background:rgba(255,255,255,.06);color:var(--mute)}
   .bt-row i.w{background:rgba(61,255,143,.18);color:var(--good)} .bt-row i.l{background:rgba(255,34,51,.22);color:#ff8a95}
   #btPanel{position:fixed;inset:66px 14px 66px 14px;z-index:18;display:grid;grid-template-columns:1.45fr 1fr;grid-template-rows:auto auto 1fr auto;gap:12px;
-    background:linear-gradient(160deg,rgba(26,10,16,.97),rgba(8,7,12,.98));border:1px solid var(--a2);border-radius:14px;padding:16px 18px;
+    background:linear-gradient(160deg,#1a0a10,#08070c);border:1px solid var(--a2);border-radius:14px;padding:16px 18px;
     box-shadow:0 0 60px rgba(181,123,255,.18);opacity:0;transform:scale(.96) translateY(14px);pointer-events:none;transition:opacity .45s,transform .6s cubic-bezier(.2,.9,.2,1)}
   #btPanel.open{opacity:1;transform:none;pointer-events:auto}
   #btPanel .hd{grid-column:1/-1;display:flex;align-items:center;gap:14px}
@@ -2103,6 +2160,111 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
 
   window.JV_backtest = {show, hide:() => show(false), open:openWindow, start, end, logTrade, undo, summary, stats, cfg, saveCfg, screens, active:() => !!session()};
 
+})();
+
+</script>
+<script>
+/* ===== Journal screen: every Cole journal entry, grouped into its own category ===== */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  const CATS = [
+    {k:'trading',  name:'TRADING'},
+    {k:'journal',  name:'PERSONAL'},
+    {k:'family',   name:'FAMILY'},
+    {k:'business', name:'BUSINESS'},
+    {k:'fitness',  name:'FITNESS'},
+    {k:'ideas',    name:'IDEAS'}
+  ];
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+  const pad = n => String(n).padStart(2, '0');
+  const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const nice = k => new Date(k + 'T12:00:00').toLocaleDateString('en-US', {weekday:'short', month:'short', day:'numeric'});
+
+  // all entries from Cole, grouped by category, newest first
+  function grouped(from, to){
+    const days = window.JV_coleDays || {}, g = {};
+    CATS.forEach(c => g[c.k] = []);
+    Object.keys(days).sort().reverse().filter(k => (!from || k >= from) && (!to || k <= to)).forEach(k => {
+      const d = days[k] || {};
+      (d.journal || []).filter(j => j && j.text && !j.hidden && j.tag !== 'raw').forEach(j => (g[g[j.tag] ? j.tag : 'journal']).push({date:k, text:String(j.text), at:j.at || 0}));
+      (d.ideas || []).filter(x => x && x.text).forEach(x => g.ideas.push({date:k, text:(x.area && x.area !== 'other' ? x.area + ': ' : '') + x.text, at:x.at || 0}));
+    });
+    Object.values(g).forEach(a => a.sort((x, y) => (y.date.localeCompare(x.date)) || (y.at - x.at)));
+    return g;
+  }
+  function rangeOf(r){
+    const now = new Date(), t = keyOf(now);
+    if (r === 'today') return [t, t];
+    if (r === 'week'){ const m = new Date(now); m.setDate(now.getDate() - ((now.getDay() + 6) % 7)); return [keyOf(m), t]; }
+    if (r === 'month'){ const m = new Date(now.getFullYear(), now.getMonth(), 1); return [keyOf(m), t]; }
+    return [null, null];
+  }
+
+  const css = document.createElement('style');
+  css.textContent = `
+  #jrPanel{position:fixed;inset:66px 14px 66px 14px;z-index:19;display:flex;flex-direction:column;gap:12px;
+    background:linear-gradient(160deg,#1a0a10,#08070c);border:1px solid var(--a2);border-radius:14px;padding:16px 18px;
+    box-shadow:0 0 60px rgba(181,123,255,.18);opacity:0;transform:scale(.96) translateY(14px);pointer-events:none;transition:opacity .45s,transform .6s cubic-bezier(.2,.9,.2,1)}
+  #jrPanel.open{opacity:1;transform:none;pointer-events:auto}
+  #jrPanel .hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  #jrPanel .hd h2{font:600 13px var(--f-mono);letter-spacing:.34em;color:var(--a2);margin-right:8px}
+  #jrPanel .hd .sp{flex:1}
+  #jrPanel button{font:600 11px var(--f-mono);letter-spacing:.14em;padding:8px 12px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);cursor:pointer;border-radius:8px}
+  #jrPanel button.on{border-color:var(--a);color:#fff;background:rgba(255,34,51,.18)}
+  #jrPanel .cols{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:minmax(0,1fr);gap:12px}
+  #jrPanel .cat{display:flex;flex-direction:column;min-height:0;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.025)}
+  #jrPanel .cat h3{display:flex;justify-content:space-between;font:600 11px var(--f-mono);letter-spacing:.26em;color:var(--a);padding:10px 12px;border-bottom:1px solid var(--line)}
+  #jrPanel .cat h3 em{font-style:normal;color:var(--mute)}
+  #jrPanel .cat ul{list-style:none;margin:0;padding:6px 12px 10px;overflow:auto;flex:1}
+  #jrPanel .cat li{padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:14px;line-height:1.4;color:var(--hi)}
+  #jrPanel .cat li small{display:block;font:500 10.5px var(--f-mono);letter-spacing:.12em;color:var(--mute);margin-bottom:2px}
+  #jrPanel .cat .none{color:var(--mute);font-size:13px;padding:10px 0}
+  #jrPanel .msg{color:var(--mute);font-size:14px}`;
+  document.head.appendChild(css);
+
+  const panel = document.createElement('section');
+  panel.id = 'jrPanel';
+  document.body.appendChild(panel);
+  let range = 'all', shown = false;
+
+  function draw(){
+    const [from, to] = rangeOf(range);
+    const g = grouped(from, to);
+    const total = Object.values(g).reduce((s, a) => s + a.length, 0);
+    panel.innerHTML = `
+      <div class="hd"><h2>JOURNAL</h2>
+        ${['today','week','month','all'].map(r => `<button data-r="${r}" class="${r === range ? 'on' : ''}">${r === 'all' ? 'ALL' : r === 'today' ? 'TODAY' : 'THIS ' + r.toUpperCase()}</button>`).join('')}
+        <span class="sp"></span><span class="msg">${total} entr${total === 1 ? 'y' : 'ies'} · from Cole</span><button id="jrClose">CLOSE ✕</button></div>
+      ${window.JV_coleSignedIn && !window.JV_coleSignedIn() ? '<p class="msg">Cole is still connecting…</p>' : ''}
+      <div class="cols">${CATS.map(c => `<div class="cat"><h3>${c.name}<em>${g[c.k].length}</em></h3><ul>${
+        g[c.k].length ? g[c.k].map(e => `<li><small>${nice(e.date)}</small>${esc(e.text)}</li>`).join('') : '<li class="none">Nothing here yet.</li>'}</ul></div>`).join('')}</div>`;
+    panel.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { range = b.dataset.r; draw(); });
+    panel.querySelector('#jrClose').onclick = hide;
+    return g;
+  }
+  function show(r){
+    if (r) range = r;
+    const g = draw(); shown = true; panel.classList.add('open');
+    return g;
+  }
+  function hide(){ shown = false; panel.classList.remove('open'); }
+  window.addEventListener('cole-update', () => { if (shown) draw(); });
+
+  // spoken summary: how many per category, plus the newest one in each
+  function spoken(g, r){
+    const label = r === 'today' ? 'today' : r === 'week' ? 'this week' : r === 'month' ? 'this month' : 'in total';
+    const parts = CATS.filter(c => g[c.k].length).map(c => `${g[c.k].length} ${c.name.toLowerCase()}`);
+    if (!parts.length) return `No journal entries ${label === 'in total' ? 'yet' : label}.`;
+    const last = parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : parts[0];
+    const newest = CATS.filter(c => g[c.k].length).slice(0, 3).map(c => `Latest ${c.name.toLowerCase()}: ${g[c.k][0].text}`).join('. ');
+    return `Here are all your journal entries ${label === 'in total' ? '' : label + ' '}by category: ${last}. ${newest}.`;
+  }
+
+  window.JV_journal = {
+    show, hide, isOpen: () => shown, grouped, rangeOf,
+    open: r => { const rr = r || 'all'; const g = show(rr); return spoken(g, rr); },
+    text: (from, to) => { const g = grouped(from, to); const o = {}; CATS.forEach(c => { if (g[c.k].length) o[c.name.toLowerCase()] = g[c.k].map(e => e.date + ': ' + e.text); }); return o; }
+  };
 })();
 
 </script>
@@ -2284,7 +2446,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
       <text x="90" y="88" text-anchor="middle" fill="var(--hi)" style="font:600 30px var(--f-display)">${label}</text><text x="90" y="112" text-anchor="middle" fill="var(--mute)" style="font:500 11px var(--f-mono);letter-spacing:.15em">${sub}</text></svg>`;
   };
   const bar = (lab, v, t, u = '') => `<div class="mbar"><div class="t"><span>${lab}</span><span>${Math.round(v)}${u} / ${t}${u}</span></div><div class="b"><i class="${v > t ? 'over' : ''}" data-w="${Math.min(100, t ? v / t * 100 : 0)}"></i></div></div>`;
-  const notLinked = what => `<div class="scard" style="grid-column:1/-1;display:grid;place-items:center;text-align:center"><div><div class="big" style="font-size:28px">Sign in to Cole</div><p style="margin-top:10px;color:var(--mute)">Open ⚙ Setup → Cole to see your ${what} here.</p></div></div>`;
+  const notLinked = what => `<div class="scard" style="grid-column:1/-1;display:grid;place-items:center;text-align:center"><div><div class="big" style="font-size:28px">Cole is connecting…</div><p style="margin-top:10px;color:var(--mute)">Your ${what} will show up here in a moment.</p></div></div>`;
 
   const SLIDES = [
     {id:'spikey', name:'Spikey', html:() => null},
@@ -2327,7 +2489,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
       return `<h2>MONEY <em>${new Date().toLocaleString([], {month:'long'})}</em></h2><div class="sgrid">
         <div class="scard"><div class="k">Accounts</div>${bank}</div>
         <div class="scard"><div class="k">Food this month</div>${linked() ? `<div class="big ${food > TARGETS.foodMonth ? 'down' : ''}" style="margin-top:8px">${money(food)}</div>${bar('Budget', food, TARGETS.foodMonth)}
-          <ul class="slist" style="margin-top:12px">${Object.keys(cats).length ? Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([c, v]) => `<li><span>${esc(c)}</span><span>${money(v)}</span></li>`).join('') : '<li class="none">No other spending logged this month</li>'}</ul>` : '<p style="color:var(--mute);margin-top:10px">Sign in to Cole in Setup.</p>'}</div></div>`;
+          <ul class="slist" style="margin-top:12px">${Object.keys(cats).length ? Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([c, v]) => `<li><span>${esc(c)}</span><span>${money(v)}</span></li>`).join('') : '<li class="none">No other spending logged this month</li>'}</ul>` : '<p style="color:var(--mute);margin-top:10px">Cole is connecting…</p>'}</div></div>`;
     }},
     {id:'habits', name:'Habits', html:() => {
       if (!linked()) return `<h2>HABITS <em>today</em></h2><div class="sgrid">${notLinked('habits')}</div>`;
