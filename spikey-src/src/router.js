@@ -39,11 +39,20 @@ Reply with ONE JSON object only:
 {"intent":"ignore"}  ONLY when the text is clearly not meant for Spikey (talking to someone else, TV, lyrics, fragments)${ctx.includes('FOLLOW-UP') ? '' : ' — this message used the wake word, so never ignore it'}
 
 Rules:
+- Prefer a catalog command whenever one plausibly fits; only use "brain" when nothing in the catalog does what he wants.
+- Nick talks Miami/street casual. Slang: "bread", "bag", "racks", "paper", "my money", "my bank" = finances; "run it back" = previous song (or replay); "cut it", "kill it", "shut that off", "shush" = pause/close depending on what's playing or open; "pull up", "throw on", "bring up" = open/show/play; "what do I got going on", "what's on deck", "what's the move today" = read my objectives; "lock in" = focus mode (or market mode if he mentions trading); "I'm out", "I'm done for the night" = wrap up my day; "ping me / hit me / holla at me at 4" = remind me at 4.
 - Fix mis-hearings using context: "back testing"/"back to sting"/"backtrace" → backtest; "objective list"/"to do"/"tasks" are the same list; "spiky/spikey/sparky" is his name for you, drop it.
 - "clear it/that", "get rid of that objective", "I did it" while objectives are on screen → "clear the objective list" if only one is open, else "complete objective <n>" when he names which.
 - Mixed requests: split into several commands, e.g. "kill the journal and pull up backtesting" → ["close journal","let's start backtesting"].
 - If one part is a catalog command and another part needs judgement, use {"intent":"brain"}.
-- Never invent things he didn't ask for.`;
+- Never invent things he didn't ask for.
+
+Examples:
+"bring my bread back up" → {"intent":"commands","commands":["open my finances"]}
+"run it back on that last song" → {"intent":"commands","commands":["previous song"]}
+"what do i got going on today" → {"intent":"commands","commands":["read my objectives"]}
+"yo cut the music and throw a 20 minute timer on" → {"intent":"commands","commands":["pause","set a 20 minute timer for timer"]}
+"how many trades did i take this week and was i disciplined" → {"intent":"brain"}`;
 
   function context(){
     const bits = [];
@@ -76,7 +85,7 @@ Rules:
       const m = t.match(/\{[\s\S]*\}/); if (!m) return null;
       const out = JSON.parse(m[0]);
       if (out.intent === 'commands' && Array.isArray(out.commands) && out.commands.length) return {commands: out.commands.map(String).filter(Boolean).slice(0, 5)};
-      if (out.intent === 'ignore') return {ignore: true};
+      if (out.intent === 'ignore') return opts.followup ? {ignore: true} : {brain: true};   // he used the wake word: never drop it
       if (out.intent === 'brain') return {brain: true};
       return null;
     }catch{ return null; }

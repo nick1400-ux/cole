@@ -82,19 +82,19 @@
   let silent = false; try{ silent = sessionStorage.getItem('spikey.silentReload') === '1'; }catch{}
   try{ Q.delete('routercheck'); history.replaceState(null, '', location.pathname + (Q.toString() ? '?' + Q : '')); }catch{}
   if (silent) return;
-  const CASES = [
-    ['yo kill the journal real quick and pull up the back to sting thing', c => c && /close journal/.test(c.join('|')) && /backtesting/.test(c.join('|'))],
-    ['bro i need to see how much protein i got in me today', c => c && /diet tracking/.test(c.join('|'))],
-    ['get that diet stuff off my screen and show me my money', c => c && /finances/.test(c.join('|'))],
-    ['throw a ten minute timer on for the chicken', c => c && /10 minute timer|ten minute timer/.test(c.join('|'))],
-    ['shush the music for a sec', c => c && /^pause$/.test(c[0])],
-    ['bring my bread back up', c => c && /finances/.test(c.join('|'))],
-    ['run it back on that last song', c => c && /previous/.test(c.join('|'))],
-    ['i went long and got stopped out for a full r', c => c && /backtest long loss 1R/i.test(c.join('|'))],
-    ['ping me at 4 to call my uncle', c => c && /remind me at 4/.test(c.join('|'))],
-    ['who won the heat game last night', (c, r) => r && r.brain],
-    ['what do i got going on today', c => c && /objectives|agenda/.test(c.join('|'))],
-    ['lock in time i got trading to do', c => c && /market mode|focus mode/.test(c.join('|'))]
+  const CASES = [   // phrasings the router was never shown as examples
+    ['yo pull up my racks', c => c && /finances/.test(c.join('|'))],
+    ['go back a track', c => c && /previous/.test(c.join('|'))],
+    ["what's on deck for me", c => c && /objectives/.test(c.join('|'))],
+    ["cut the tunes and lock in the market's about to open", c => c && /pause/.test(c.join('|')) && /market mode|focus mode/.test(c.join('|'))],
+    ['holla at me in 15 to take the chicken out', c => c && /remind me in 15/.test(c.join('|'))],
+    ['nah close that and show me my gym stuff', c => c && /habits/.test(c.join('|'))],
+    ['drop a backtest short took a full loss', c => c && /backtest short loss 1R/i.test(c.join('|'))],
+    ['how much did i make this week', (c, r) => (c && /p&l|pnl/i.test(c.join('|'))) || (r && r.brain)],
+    ['throw on some kendrick', c => c && /^play .*kendrick/i.test(c.join('|'))],
+    ['get rid of the backtest screen', c => c && /minimize backtest|close it/.test(c.join('|'))],
+    ['set me an alarm for 6 tomorrow', c => c && /wake me up at 6/.test(c.join('|'))],
+    ["what's it looking like outside", c => c && /weather/.test(c.join('|'))]
   ];
   (async () => {
     await new Promise(r => setTimeout(r, 12000));

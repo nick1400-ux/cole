@@ -396,7 +396,9 @@
       }
       return null;
     };
+    let routed = false;
     if (!canonical && routerOn() && (text.split(/\s+/).length > 6 || /\b(and|then|also|plus)\b/.test(text) || followup)){
+      routed = true;
       const r = await routeIt();
       if (r === IGNORED) return IGNORED;
       if (r) return;
@@ -590,7 +592,7 @@
     // --- everything else: ask the brain ---
     if (brainOn){
       // nothing local matched: let the router translate it into a known command before falling back to the full brain
-      if (!canonical && routerOn()){ const r = await routeIt(); if (r === IGNORED) return IGNORED; if (r) return; }
+      if (!canonical && routerOn() && !routed){ const r = await routeIt(); if (r === IGNORED) return IGNORED; if (r) return; }
       return toBrain();
     }
     if (followup) return IGNORED;                         // no brain: don't answer chatter that isn't a command
