@@ -1146,6 +1146,18 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     if (!r.ok){ let m = ''; try{ m = (await r.json()).error.message; }catch{} throw new Error('Claude error. ' + m); }
     return r.json();
   }
+  // JSON answer that may need fresh facts from the web (economic calendar etc.)
+  async function askJSONWeb(prompt){
+    const messages = [{role:'user', content:prompt + '\n\nUse web_search, then reply with the JSON object only. No prose, no code fences.'}];
+    let t = '';
+    for (let i = 0; i < 4; i++){
+      const j = await call({model:'claude-sonnet-5-5', max_tokens:2000, tools:[{type:'web_search_20250305', name:'web_search', max_uses:4}], messages});
+      messages.push({role:'assistant', content:j.content});
+      t = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+      if (j.stop_reason !== 'pause_turn') break;
+    }
+    const m = t.match(/\{[\s\S]*\}/); return JSON.parse(m ? m[0] : t);
+  }
   async function askJSON(prompt){
     const j = await call({model:'claude-sonnet-5-5', max_tokens:1500, messages:[{role:'user', content:prompt + '\n\nReply with the JSON object only. No prose, no code fences.'}]});
     const t = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
@@ -1170,6 +1182,10 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     {name:'add_web_slide', description:'Pin a website or video into the slide rotation permanently (a live embed), e.g. a YouTube livestream or a TradingView chart.', input_schema:{type:'object', properties:{url:{type:'string'}, title:{type:'string'}}, required:['url','title']}},
     {name:'close_screen', description:'Close the website/video screen.', input_schema:{type:'object', properties:{}}},
     {name:'backtest', description:'Nick\'s backtesting session (he backtests on another screen; Spikey only keeps score): start the session, log a backtest trade, get stats, undo the last trade, or end the session. Use for anything about backtesting or replay.', input_schema:{type:'object', properties:{action:{type:'string', enum:['start','show','minimize','log','summary','undo','end']}, direction:{type:'string', enum:['long','short']}, outcome:{type:'string', enum:['win','loss','breakeven']}, r:{type:'number', description:'R multiple, e.g. 2 for a 2R win'}}, required:['action']}},
+    {name:'timer', description:'Set a timer, alarm or reminder that rings and speaks when due. For a timer give minutes; for an alarm or reminder at a clock time give time as HH:MM 24-hour local; for a reminder after a delay give minutes.', input_schema:{type:'object', properties:{kind:{type:'string', enum:['timer','alarm','reminder','cancel','list']}, minutes:{type:'number'}, time:{type:'string'}, label:{type:'string'}}, required:['kind']}},
+    {name:'protocol', description:'Run one of Spikey\'s protocols (routines): market (trading mode: pause music, focus, trading slide, rules, news), backtest, morning (briefing), wrap (end-of-day summary + journal), party (music), focus (quiet mode), unfocus.', input_schema:{type:'object', properties:{name:{type:'string', enum:['market','backtest','morning','wrap','party','focus','unfocus']}}, required:['name']}},
+    {name:'status_report', description:'System status: brain, Cole, Spotify device, microphone, battery, network, backtest session, timers, focus mode.', input_schema:{type:'object', properties:{}}},
+    {name:'economic_news', description:'Today\'s high-impact USD economic events with Eastern times (CPI, NFP, FOMC...).', input_schema:{type:'object', properties:{}}},
     {name:'add_task', description:'Add an objective to Spikey\'s on-screen list.', input_schema:{type:'object', properties:{text:{type:'string'}}, required:['text']}},
     {name:'complete_task', description:'Mark one of Spikey\'s objectives done, by its number (1 = first).', input_schema:{type:'object', properties:{number:{type:'integer'}}, required:['number']}},
     {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. Use when he says log, journal, note, tell Cole, or describes his trades, food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
@@ -1229,6 +1245,20 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
           if (input.action === 'end') return B.end();
           return B.summary();
         }
+        case 'timer': {
+          const A = window.JV_assist; if (!A) return 'Not available.';
+          if (input.kind === 'list') return A.list();
+          if (input.kind === 'cancel') return A.cancel(input.label || 'last');
+          let at = null;
+          if (input.time){ const [h, m] = String(input.time).split(':').map(Number); const d = new Date(); d.setHours(h, m || 0, 0, 0); if (d < new Date()) d.setDate(d.getDate() + 1); at = d.getTime(); }
+          if (input.kind === 'timer'){ if (!input.minutes) return 'Need minutes.'; A.timer(input.minutes * 60000, input.label); return 'Timer set.'; }
+          if (!at && input.minutes) at = Date.now() + input.minutes * 60000;
+          if (!at) return 'Need a time or minutes.';
+          (input.kind === 'alarm' ? A.alarm : A.reminder)(at, input.label); return 'Set for ' + new Date(at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}) + '.';
+        }
+        case 'protocol': { const r = window.JV_assist && await window.JV_assist.protocol(input.name + ' protocol'); return r ? r.message : 'Unknown protocol.'; }
+        case 'status_report': return window.JV_assist ? await window.JV_assist.status() : 'Not available.';
+        case 'economic_news': { const n = window.JV_assist && await window.JV_assist.loadNews(true); return n ? JSON.stringify(n.events) : 'Could not check the calendar.'; }
         case 'add_task': window.JV_tasks.add(input.text); return 'Added.';
         case 'complete_task': return window.JV_tasks.complete(input.number);
         case 'log_to_cole': return (await window.JV_coleLog(input.text, askJSON)).message;
@@ -1258,6 +1288,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
   function system(){
     const now = new Date();
     return `You are Spikey, Nick's personal voice assistant, running on his laptop dashboard. Sledge B is his brand ("by outcasts for outcasts"). Nick is a Miami Mercedes-Benz technician who day trades MYM/YM futures with strict rules (max 2 trades a day, no revenge trades, no oversizing, no FOMO, trade only 9:30 to 10:30 ET) and runs Sledge B events and content.
+Personality: like J.A.R.V.I.S. from Iron Man: calm, sharp, loyal, quietly confident, with a dry wit used sparingly. Anticipate what he needs next and offer it in a few words. Never sycophantic.
 Your replies are SPOKEN ALOUD. Keep them to 1 to 3 short sentences, casual and direct, no markdown, no lists, no emojis, never read out URLs. Say numbers naturally.
 Cole is Nick's other app and you and Cole are ONE personal assistant with one shared memory: his Cole to-dos are your objectives, everything in Cole (journal, meals, trades, ideas, spending, habits) is yours, and everything you record (objectives, backtests, what you learn) goes into Cole. Never ask Nick to open Cole, sign in, share or give access to his data, and never ask permission to look; just read it with your tools and answer. When he asks for journal entries, use show_journal and give him all of them organized by category, not just one day or one type. Today's date is ${(d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'))(now)}.
 You keep improving: whenever Nick corrects you, tells you how he wants something done, or says always, never, next time or from now on, call the learn tool so you remember it permanently, then confirm briefly.
@@ -1297,7 +1328,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
   window.JV_brain = {
     hasKey: () => !!key(),
     setKey: v => { try{ v ? localStorage.setItem(KEY_LS, v.trim()) : localStorage.removeItem(KEY_LS); }catch{} },
-    ask, askJSON
+    ask, askJSON, askJSONWeb
   };
 })();
 
@@ -1548,6 +1579,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
 
   let talkTimer = null, lastSpokeEnd = 0;
   window.JV_say = t => say(t);
+  window.JV_chime = up => chime(up);
   // ---------- barge-in: "stop" while Spikey is talking cuts it off ----------
   let curDone = null, curText = '', hushUntil = 0, dropReply = false;
   const STOP_TAIL = /(?:^|\s)(stop|stop talking|stop it|shut up|be quiet|quiet|enough|that'?s enough|cancel|hold on|hold up|okay okay|all right all right)( spikey| spiky| please| now)?$/i;
@@ -1684,6 +1716,10 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
       if (/wake up|come online|i'?m back|online/.test(text)){ setMode('idle'); return briefing(`Welcome back, ${CONFIG.name}.`); }
       return;
     }
+    // --- timers, reminders, alarms, protocols, status report, news (assist.js) ---
+    if (window.JV_assist && !(opts && opts.followup && text.split(' ').length > 8)){
+      try{ const r = await window.JV_assist.quick(text); if (r) return say(r); }catch(e){ console.warn(e); }
+    }
     // --- things Spikey learned: voice shortcuts and teaching ---
     if (window.JV_learn){
       const Ln = window.JV_learn;
@@ -1746,6 +1782,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
       if (window.JV_journal && window.JV_journal.isOpen()){ window.JV_journal.hide(); did = true; }
       if (window.JV_custom && window.JV_custom.isOpen()){ window.JV_custom.closeScreen(); did = true; }
       if (window.JV_backtest && window.JV_backtest.active() && document.querySelector('#btPanel.open')){ window.JV_backtest.hide(); did = true; }
+      const cap = document.getElementById('capPanel'); if (cap && cap.style.display === 'block'){ cap.style.display = 'none'; did = true; }
       if (!did && window.JV_slides && document.querySelector('#slides .slide.on')){ window.JV_slides.home(); return; }
       if (did) return say('Closed.');
     }
@@ -2680,6 +2717,325 @@ HTML>>>`;
 
 </script>
 <script>
+/* ===== JARVIS-style capabilities: timers/alarms/reminders, protocols (routines), proactive heads-ups,
+   status report, focus mode, end-of-day wrap-up, economic-news watch ===== */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  const LS = 'spikey.assist.';
+  const get = (k, d) => { try{ const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); }catch{ return d; } };
+  const put = (k, v) => { try{ localStorage.setItem(LS + k, JSON.stringify(v)); }catch{} };
+  const say = t => window.JV_say ? window.JV_say(t) : Promise.resolve();
+  const pad = n => String(n).padStart(2, '0');
+  const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+  const NUM = {a:1, an:1, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, fifteen:15, twenty:20, thirty:30, forty:40, 'forty five':45, fifty:50, sixty:60, ninety:90, half:0.5};
+  const num = w => { w = String(w).trim(); return /^\d+(\.\d+)?$/.test(w) ? +w : NUM[w]; };
+  // New York time pieces (Nick trades on ET even if the laptop clock drifts)
+  const et = () => { const p = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York', hour12:false, weekday:'short', hour:'2-digit', minute:'2-digit'}).formatToParts(new Date()); const o = {}; p.forEach(x => o[x.type] = x.value); return {wd:o.weekday, h:+o.hour % 24, m:+o.minute, hm:(+o.hour % 24) * 60 + +o.minute}; };
+  const fmtLeft = ms => { const s = Math.max(0, Math.round(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`; };
+  const spokenDur = ms => { const m = Math.round(ms / 60000); if (m < 1){ const s = Math.round(ms / 1000); return s + ' second' + (s === 1 ? '' : 's'); } if (m < 60) return m + ' minute' + (m === 1 ? '' : 's'); const h = Math.floor(m / 60), r = m % 60; return h + ' hour' + (h === 1 ? '' : 's') + (r ? ' ' + r + ' minutes' : ''); };
+
+  // ---------- timers, alarms, reminders ----------
+  let items = get('items', []);                 // {id, kind:'timer'|'alarm'|'reminder', at, label, made}
+  const saveItems = () => { put('items', items); drawChip(); };
+  function add(kind, at, label){
+    const it = {id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kind, at, label: label || '', made: Date.now()};
+    items.push(it); items.sort((a, b) => a.at - b.at); saveItems(); return it;
+  }
+  function cancel(q){
+    if (!items.length) return 'Nothing is set.';
+    q = String(q || '').toLowerCase();
+    const byLabel = items.filter(i => i.label && q.includes(i.label.toLowerCase().slice(0, 12)));
+    let hit = /\ball\b|every/.test(q) ? items.slice() : byLabel.length ? byLabel : items.filter(i => (q.includes('timer') && i.kind === 'timer') || (q.includes('alarm') && i.kind === 'alarm') || (q.includes('remind') && i.kind === 'reminder')).slice(0, 1);
+    if (!hit.length) hit = [items[items.length - 1]];
+    items = items.filter(i => !hit.includes(i)); saveItems();
+    return hit.length === 1 ? `Cancelled the ${hit[0].kind}${hit[0].label ? ' for ' + hit[0].label : ''}.` : `Cancelled ${hit.length}.`;
+  }
+  function list(){
+    if (!items.length) return 'No timers, alarms or reminders set.';
+    return items.map(i => i.kind === 'timer' ? `a timer${i.label ? ' for ' + i.label : ''} with ${spokenDur(i.at - Date.now())} left`
+      : `${i.kind === 'alarm' ? 'an alarm' : 'a reminder' + (i.label ? ' to ' + i.label : '')} at ${new Date(i.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}`).join(', ') + '.';
+  }
+  // "10 minutes", "an hour and a half", "90 seconds", "2 hours 15 minutes"
+  function parseDur(t){
+    t = t.replace(/an hour and a half|one and a half hours?/, '90 minutes').replace(/half an hour|half hour/, '30 minutes').replace(/a minute and a half/, '90 seconds');
+    let ms = 0, any = false;
+    const re = /(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty five|forty|fifty|sixty|ninety)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)\b/g;
+    let m; while ((m = re.exec(t))){ const n = num(m[1]); if (n == null) continue; any = true; ms += n * (/^h/.test(m[2]) ? 3600e3 : /^m/.test(m[2]) ? 60e3 : 1e3); }
+    return any ? ms : null;
+  }
+  // "3pm", "3:15 pm", "15:30", "noon", "7 in the morning"
+  function parseClock(t){
+    if (/\bnoon\b/.test(t)) return mk(12, 0);
+    if (/\bmidnight\b/.test(t)) return mk(0, 0);
+    const m = t.match(/\b(\d{1,2})(?::|\s)?(\d{2})?\s*(a\.?m\.?|p\.?m\.?|in the morning|in the afternoon|in the evening|tonight|at night)?\b/);
+    if (!m) return null;
+    let h = +m[1], mi = m[2] ? +m[2] : 0; if (h > 23 || mi > 59) return null;
+    const ap = m[3] || '';
+    if (/p|afternoon|evening|tonight|night/.test(ap) && h < 12) h += 12;
+    if (/a|morning/.test(ap) && h === 12) h = 0;
+    if (!ap && h < 12){ const now = new Date(); if (mk(h, mi) < now.getTime() && mk(h + 12, mi) > now.getTime() && h + 12 < 24) h += 12; }
+    return mk(h, mi);
+    function mk(H, M){ const d = new Date(); d.setHours(H, M, 0, 0); if (d.getTime() < Date.now() - 30000) d.setDate(d.getDate() + 1); return d.getTime(); }
+  }
+  function mk(H, M){ const d = new Date(); d.setHours(H, M, 0, 0); if (d.getTime() < Date.now() - 30000) d.setDate(d.getDate() + 1); return d.getTime(); }
+
+  // ring
+  let ringing = null;
+  function ring(it){
+    const c = window.JV_chime; let n = 0;
+    ringing = setInterval(() => { if (c) c(true); if (++n >= 6){ clearInterval(ringing); ringing = null; } }, 900);
+    const text = it.kind === 'timer' ? `Your ${it.label ? it.label + ' ' : ''}timer is done.` : it.kind === 'alarm' ? `It's ${new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}. ${it.label ? it.label + '.' : 'Time to get up.'}` : `Reminder: ${it.label || 'you asked me to remind you.'}`;
+    showToast(it.kind === 'timer' ? 'TIMER' : it.kind === 'alarm' ? 'ALARM' : 'REMINDER', it.label || text);
+    setTimeout(() => say(text), 1200);
+  }
+  setInterval(() => {
+    const now = Date.now(), due = items.filter(i => i.at <= now);
+    if (due.length){ items = items.filter(i => i.at > now); saveItems(); due.forEach(ring); }
+    drawChip();
+  }, 1000);
+
+  // top-bar chip with the next countdown
+  const css = document.createElement('style');
+  css.textContent = `
+  #timerChip{cursor:pointer;border:1px solid var(--a2);color:var(--a2);padding:6px 10px;display:none}
+  #toast{position:fixed;left:50%;top:84px;transform:translateX(-50%) translateY(-20px);z-index:40;min-width:320px;max-width:70vw;padding:14px 20px;border:1px solid var(--a);border-radius:12px;
+    background:linear-gradient(160deg,#1a0a10,#08070c);box-shadow:0 0 40px rgba(255,34,51,.35);opacity:0;pointer-events:none;transition:all .4s}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
+  #toast b{display:block;font:600 11px var(--f-mono);letter-spacing:.3em;color:var(--a);margin-bottom:6px}
+  #toast span{font:500 20px var(--f-display);color:var(--hi)}`;
+  document.head.appendChild(css);
+  const chip = document.createElement('span'); chip.id = 'timerChip'; chip.className = 'chip';
+  const top = document.querySelector('.top'), state = document.getElementById('stateLabel');
+  if (top && state) top.insertBefore(chip, state);
+  chip.onclick = () => say(list());
+  function drawChip(){
+    const n = items[0];
+    chip.style.display = n ? '' : 'none';
+    if (n) chip.textContent = (n.kind === 'timer' ? '⏱ ' + fmtLeft(n.at - Date.now()) : (n.kind === 'alarm' ? '⏰ ' : '🔔 ') + new Date(n.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})) + (items.length > 1 ? ' +' + (items.length - 1) : '');
+  }
+  const toast = document.createElement('div'); toast.id = 'toast'; document.body.appendChild(toast);
+  let toastT = null;
+  function showToast(title, text, ms = 12000){
+    toast.innerHTML = `<b>${esc(title)}</b><span>${esc(text)}</span>`; toast.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('show'), ms);
+    toast.onclick = () => { toast.classList.remove('show'); if (ringing){ clearInterval(ringing); ringing = null; } };
+  }
+
+  // ---------- focus mode: proactive heads-ups go quiet except the critical ones ----------
+  let focusUntil = get('focusUntil', 0);
+  const focused = () => Date.now() < focusUntil;
+  function setFocus(on, mins){ focusUntil = on ? Date.now() + (mins || 60) * 60000 : 0; put('focusUntil', focusUntil); }
+
+  // ---------- proactive heads-ups (once per day each) ----------
+  const fired = () => { const f = get('fired', {}); return f.day === keyOf(new Date()) ? f : {day:keyOf(new Date())}; };
+  const once = (id, fn, critical) => { const f = fired(); if (f[id]) return; f[id] = 1; put('fired', f); if (!critical && focused()) return; fn(); };
+  const weekday = () => !['Sat', 'Sun'].includes(et().wd);
+  const todayTrades = () => { const d = (window.JV_coleDays || {})[keyOf(new Date())]; return (d && d.trades) || []; };
+  const todayDoc = () => (window.JV_coleDays || {})[keyOf(new Date())] || {};
+  let news = get('news', null);                  // {day, events:[{time:'08:30', title, impact}]}
+  function proactive(){
+    const t = et(); if (window.JV && window.JV.mode === 'sleep') return;
+    if (weekday()){
+      if (t.hm >= 9 * 60 + 25 && t.hm < 9 * 60 + 30) once('open5', () => {
+        const d = todayDoc(), ci = d.checkin;
+        alert('MARKET OPEN', `Market opens in five minutes. ${ci ? '' : "You haven't done your check-in yet. "}Max two trades, no revenge, no FOMO, out by ten thirty.`);
+      }, true);
+      if (t.hm >= 10 * 60 + 25 && t.hm < 10 * 60 + 30) once('close5', () => alert('WINDOW', 'Five minutes left in your trading window.'), true);
+      if (t.hm >= 10 * 60 + 30 && t.hm < 10 * 60 + 35) once('closed', () => alert('WINDOW CLOSED', "Trading window's closed. Hands off the keyboard. Good time to journal the session."), true);
+      (news && news.day === keyOf(new Date()) ? news.events : []).forEach(ev => {
+        const [h, m] = String(ev.time || '').split(':').map(Number); if (isNaN(h)) return;
+        const at = h * 60 + m;
+        if (t.hm >= at - 5 && t.hm < at) once('news-' + ev.time + ev.title, () => alert('NEWS', `${ev.title} drops in ${at - t.hm} minute${at - t.hm === 1 ? '' : 's'}. Expect volatility.`), true);
+      });
+    }
+    if (t.hm >= 19 * 60 && t.hm < 22 * 60){
+      const d = todayDoc(), p = (d.meals || []).reduce((s, x) => s + (+x.p || 0), 0);
+      if (window.JV_coleSignedIn && window.JV_coleSignedIn() && p < 100) once('protein', () => alert('FUEL', `You're at ${Math.round(p)} grams of protein. ${150 - Math.round(p)} to go to hit 150.`));
+    }
+    if (t.hm >= 21 * 60 && t.hm < 23 * 60 + 30){
+      const d = todayDoc(), j = (d.journal || []).filter(x => !x.hidden).length;
+      if (window.JV_coleSignedIn && window.JV_coleSignedIn() && !j) once('journal', () => alert('WRAP-UP', 'Nothing in your journal today. Say "Spikey, wrap up my day" and I will walk you through it.'));
+    }
+  }
+  function alert(title, text){
+    showToast(title, text);
+    const go = () => { if (window.JV && (window.JV.speaking || window.JV.mode === 'thinking')) return setTimeout(go, 3000); say(text); };
+    go();
+  }
+  setInterval(proactive, 20000); setTimeout(proactive, 15000);
+
+  // trade watch: hitting the limit, or trading again right after a loss
+  let lastTradeCount = null;
+  window.addEventListener('cole-update', () => {
+    const tr = todayTrades(), n = tr.length;
+    if (lastTradeCount != null && n > lastTradeCount){
+      const last = tr[n - 1], prev = tr[n - 2];
+      if (n === 2) alert('LIMIT', "That's two trades. You're done for the day. Protect the account.");
+      else if (n > 2) alert('OVER LIMIT', `That's trade number ${n}. You're over your two-trade limit. Step away from the charts.`);
+      else if (last && +last.pnl < 0) alert('LOSS', 'Loss logged. Take five minutes before anything else. No revenge.');
+      if (prev && +prev.pnl < 0 && last && last.at && prev.at && last.at - prev.at < 10 * 60000) alert('REVENGE CHECK', 'That trade came within ten minutes of a loss. Was it on your plan?');
+    }
+    lastTradeCount = n;
+  });
+
+  // economic calendar: high-impact USD news for today, fetched once each trading morning through Claude + web search
+  async function loadNews(force){
+    const today = keyOf(new Date());
+    if (!force && news && news.day === today) return news;
+    if (!weekday() || !(window.JV_brain && window.JV_brain.hasKey())) return null;
+    try{
+      const j = await window.JV_brain.askJSONWeb(`Today is ${new Date().toLocaleDateString('en-US', {timeZone:'America/New_York', weekday:'long', month:'long', day:'numeric', year:'numeric'})}. Search an economic calendar (Forex Factory, Investing.com or similar) for TODAY's high-impact USD events (red folder: CPI, NFP, FOMC, PPI, GDP, jobless claims, retail sales, ISM, Powell speeches). Return {"events":[{"time":"HH:MM" (24h Eastern time), "title":"short name", "impact":"high"}]} sorted by time; empty array if none.`);
+      news = {day: today, events: (j.events || []).filter(e => e && e.time && e.title).slice(0, 8), at: Date.now()};
+      put('news', news);
+      return news;
+    }catch{ return null; }
+  }
+  setTimeout(() => { const t = et(); if (t.hm >= 6 * 60 && t.hm < 16 * 60) loadNews(); }, 20000);
+  setInterval(() => { const t = et(); if (t.hm >= 6 * 60 && t.hm < 16 * 60) loadNews(); }, 30 * 60000);
+  const newsSentence = n => !n ? "I couldn't check the economic calendar." : !n.events.length ? 'No high-impact USD news today.'
+    : 'High-impact news today: ' + n.events.map(e => `${e.title} at ${fmt12(e.time)}`).join(', ') + '.';
+  const fmt12 = hm => { const [h, m] = hm.split(':').map(Number); return `${((h + 11) % 12) + 1}${m ? ':' + pad(m) : ''} ${h < 12 ? 'AM' : 'PM'}`; };
+
+  // ---------- status report ----------
+  async function status(){
+    const parts = [];
+    const sp = window.JV_spotify;
+    parts.push(window.JV_brain && window.JV_brain.hasKey() ? 'Brain online.' : 'Brain offline, no Claude key.');
+    parts.push(window.JV_coleSignedIn && window.JV_coleSignedIn() ? 'Cole synced.' : 'Cole still connecting.');
+    if (sp && sp.connected()){ try{ parts.push((await sp.where()).replace('Spotify is playing', 'Music playing')); }catch(e){ parts.push('Spotify: ' + e.message); } }
+    else parts.push('Spotify not connected.');
+    const D = window.JV && window.JV.diag;
+    parts.push(D && D.gum === 'ok' ? 'Microphone live.' : D ? 'Microphone: ' + D.gum + '.' : '');
+    try{ const b = await navigator.getBattery(); parts.push(`Battery ${Math.round(b.level * 100)} percent${b.charging ? ', charging' : ''}.`); }catch{}
+    parts.push(navigator.onLine ? 'Network up.' : 'Network down.');
+    if (window.JV_backtest && window.JV_backtest.active()) parts.push('Backtest session running: ' + window.JV_backtest.summary());
+    if (items.length) parts.push('Pending: ' + list());
+    if (focused()) parts.push('Focus mode is on.');
+    return parts.filter(Boolean).join(' ');
+  }
+
+  // ---------- day summary + wrap-up ----------
+  function daySummary(){
+    const d = todayDoc(), tr = d.trades || [], pnl = tr.reduce((s, x) => s + (+x.pnl || 0), 0);
+    const p = (d.meals || []).reduce((s, x) => s + (+x.p || 0), 0), k = (d.meals || []).reduce((s, x) => s + (+x.kcal || 0), 0);
+    const habits = ['gym', 'reel', 'family'].filter(h => d[h]);
+    const obj = (window.JV_tasks && window.JV_tasks.list()) || [];
+    const bits = [];
+    bits.push(tr.length ? `${tr.length} trade${tr.length > 1 ? 's' : ''}, ${pnl >= 0 ? 'up' : 'down'} ${Math.abs(Math.round(pnl))} dollars.` : 'No trades today.');
+    bits.push(`${Math.round(p)} grams of protein and ${Math.round(k)} calories.`);
+    bits.push(habits.length ? 'Done: ' + habits.map(h => ({gym:'gym', reel:'reel posted', family:'family time'})[h]).join(', ') + '.' : 'No habits checked off yet.');
+    bits.push(obj.length ? `${obj.length} objective${obj.length > 1 ? 's' : ''} still open.` : 'Objectives all clear.');
+    return bits.join(' ');
+  }
+
+  // ---------- protocols (JARVIS-style routines) ----------
+  const PROTOCOLS = {
+    market: {names:/^(market|trading|trade|session|game ?day|war ?room)( mode| protocol| time)?$/, title:'Market protocol', steps: async () => {
+      try{ if (window.JV_spotify && window.JV_spotify.connected()) await window.JV_spotify.control('pause'); }catch{}
+      setFocus(true, 90);
+      if (window.JV_slides) window.JV_slides.show('trading', 60000);
+      const d = todayDoc(); const n = (d.trades || []).length;
+      const nws = await loadNews();
+      return `Market protocol. Music's paused and I'm going quiet except for the important stuff. ${n ? `You've taken ${n} of 2 trades.` : 'Zero of two trades so far.'} ${d.checkin ? '' : 'Do your check-in first. '}${newsSentence(nws)} Rules: plan only, no oversizing, no revenge, no FOMO, out by ten thirty.`;
+    }},
+    backtest: {names:/^(backtest|backtesting|replay|practice)( mode| protocol)$/, title:'Backtest protocol', steps: async () => {
+      setFocus(true, 120);
+      if (window.JV_backtest) window.JV_backtest.open();
+      return 'Backtest protocol. Logging screen is up and I will keep the interruptions down. Call your trades as you take them.';
+    }},
+    party: {names:/^(house party|party|turn up|hype|vibe|rave)( mode| protocol| time)?$/, title:'Party protocol', steps: async () => {
+      setFocus(false);
+      try{ if (window.JV_spotify && window.JV_spotify.connected()) return (await window.JV_spotify.play('techno bunker', 'playlist')).message + ' Party protocol engaged.'; }catch(e){ return 'Party protocol, but Spotify said: ' + e.message; }
+      return 'Party protocol engaged. Connect Spotify and I will bring the music.';
+    }},
+    focus: {names:/^(focus|do not disturb|dnd|deep work|lock in|locked in)( mode| protocol)?$/, title:'Focus', steps: async () => { setFocus(true, 90); return 'Focus mode for ninety minutes. I will only speak up for timers, market times and trade limits.'; }},
+    unfocus: {names:/^(end|stop|exit|turn off|cancel) (focus|do not disturb|dnd|deep work)( mode)?$|^focus (mode )?off$/, title:'Focus off', steps: async () => { setFocus(false); return 'Focus mode off.'; }},
+    wrap: {names:/^(wrap up|wrap|end of day|eod|close out|night ?time|good ?night)( my day| the day| protocol| mode)?$/, title:'Wrap-up protocol', steps: async () => {
+      if (window.JV_slides) window.JV_slides.show('habits', 60000);
+      return `Here's your day. ${daySummary()} Tell me how the day went, starting with "log to Cole", and I'll file it in your journal.`;
+    }},
+    morning: {names:/^(morning|good morning|wake up|rise and grind|start my day|start the day)( protocol| routine| brief(ing)?)?$/, title:'Morning protocol', steps: async () => {
+      const nws = await loadNews();
+      const obj = (window.JV_tasks && window.JV_tasks.list()) || [];
+      if (window.JV_slides) window.JV_slides.show('agenda', 60000);
+      return `Morning. ${newsSentence(nws)} ${obj.length ? `${obj.length} objective${obj.length > 1 ? 's' : ''} on deck. First up: ${obj[0]}.` : 'No open objectives.'} Market opens at nine thirty. Let's make shit happen.`;
+    }}
+  };
+  async function protocol(text){
+    const t = String(text || '').toLowerCase().replace(/^(engage|activate|run|start|initiate|begin|enable|go into|put me in|turn on|let'?s do|lets do|it'?s)\s+(the |my )?/, '').replace(/\s+(protocol|routine)$/, ' protocol').trim();
+    for (const [id, p] of Object.entries(PROTOCOLS)) if (p.names.test(t) || p.names.test(t.replace(/ protocol$/, ''))){ const msg = await p.steps(); return {id, message:msg}; }
+    return null;
+  }
+
+  // ---------- quick voice commands, checked by the engine before the brain ----------
+  async function quick(text){
+    let m;
+    // timers
+    if ((m = text.match(/^(?:set|start|put|make)?\s*(?:a|an)?\s*(.+?)\s*timer(?: for (.+))?$/)) || (m = text.match(/^(?:set |start )?(?:a |an )?timer (?:for |of )?(.+?)(?: (?:for|called|named) (.+))?$/))){
+      let dur = parseDur(m[1]), label = m[2] || '';
+      if (dur == null && m[2]){ dur = parseDur(m[2]); label = m[1]; }
+      label = String(label).replace(/^(set |start |make |put )?(a |an |the |my )?/, '').trim();
+      if (/^(a|an|set|the|my)$/.test(label) || parseDur(label) != null) label = '';
+      if (dur != null && dur > 0){ add('timer', Date.now() + dur, label.replace(/^(the|my)\s+/, '')); return `Timer set for ${spokenDur(dur)}${label ? ', ' + label : ''}.`; }
+    }
+    // reminders: "remind me in 20 minutes to …", "remind me at 3pm to …", "remind me to … at 3pm / in 10 minutes"
+    if ((m = text.match(/^remind me (?:in|after) (.+?) (?:to|that|about) (.+)$/))){ const d = parseDur(m[1]); if (d){ add('reminder', Date.now() + d, m[2]); return `I'll remind you in ${spokenDur(d)} to ${m[2]}.`; } }
+    if ((m = text.match(/^remind me (?:at|by) (.+?) (?:to|that|about) (.+)$/))){ const at = parseClock(m[1]); if (at){ add('reminder', at, m[2]); return `I'll remind you at ${new Date(at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})} to ${m[2]}.`; } }
+    if ((m = text.match(/^remind me (?:to|that|about) (.+?) (in|at|by) (.+)$/))){
+      const at = m[2] === 'in' ? (parseDur(m[3]) ? Date.now() + parseDur(m[3]) : null) : parseClock(m[3]);
+      if (at){ add('reminder', at, m[1]); return `Got it. ${new Date(at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}, ${m[1]}.`; }
+    }
+    // alarms
+    if ((m = text.match(/^(?:set (?:an |my )?alarm|wake me(?: up)?|alarm)(?: for| at)? (.+?)(?: to (.+))?$/))){ const at = parseClock(m[1]); if (at){ add('alarm', at, m[2] || ''); return `Alarm set for ${new Date(at).toLocaleString([], {weekday:'long', hour:'numeric', minute:'2-digit'})}.`; } }
+    if (/^(cancel|stop|delete|clear|remove|kill|turn off)\b.*\b(timers?|alarms?|reminders?)\b/.test(text) && text.split(' ').length <= 8) return cancel(text);
+    if (/^(what|which|any) (timers?|alarms?|reminders?)( do i have| are set| are there)?$|^(how much|how long) (time )?(is )?(left|remaining)( on (the|my) timer)?$|^list (my )?(timers|alarms|reminders)$/.test(text)) return list();
+    if (ringing && /^(ok|okay|stop|thanks|thank you|got it|dismiss|shut up)$/.test(text)){ clearInterval(ringing); ringing = null; toast.classList.remove('show'); return 'Done.'; }
+    // status, news, summary
+    if (/^(status( report)?|system(s)? (check|status|report)|diagnostics?|run (a )?diagnostics?|how are (you|we) (doing|looking)|sitrep)$/.test(text)) return await status();
+    if (/(economic|eco|red folder|high impact|market) (news|calendar|events)|news (today|this morning)|any news today|what news is (out|coming) today/.test(text)){ const n = await loadNews(true); return newsSentence(n); }
+    if (/^(how('?s| is| was) my day|day summary|summari[sz]e my day|daily summary|recap( my day)?)$/.test(text)) return daySummary();
+    if (/^(what can you do|what are your (capabilities|skills|commands)|help|capabilities|list (your )?(commands|protocols)|what protocols (do you have|are there))$/.test(text)){ showCapabilities(); return 'Here is what I can do. It is on screen.'; }
+    // protocols
+    const p = await protocol(text); if (p) return p.message;
+    return null;
+  }
+
+  // capabilities sheet (uses the journal-style full screen)
+  function showCapabilities(){
+    let el = document.getElementById('capPanel');
+    if (!el){
+      el = document.createElement('section'); el.id = 'capPanel';
+      el.style.cssText = 'position:fixed;inset:66px 14px 66px 14px;z-index:21;background:linear-gradient(160deg,#1a0a10,#08070c);border:1px solid var(--a2);border-radius:14px;padding:16px 20px;overflow:auto;display:none';
+      document.body.appendChild(el);
+      window.addEventListener('spikey-screen', e => { if (e.detail !== 'caps') el.style.display = 'none'; });
+    }
+    const G = [
+      ['PROTOCOLS', ['"Market mode": pauses music, focus on, trading slide, rules + news', '"Backtest mode": logging screen + focus', '"Morning protocol": news, objectives, market times', '"Wrap up my day": day summary + journal it', '"House party protocol": music up', '"Focus mode" / "focus off"']],
+      ['TIME', ['"Set a 10 minute timer for eggs"', '"Remind me at 3pm to call uncle"', '"Remind me in 20 minutes to stretch"', '"Wake me up at 7"', '"What timers do I have" · "cancel the timer"']],
+      ['HEADS-UPS', ['Market opens in 5 · window closing · window closed', 'High-impact news 5 minutes before release', 'Two-trade limit, loss cool-down, revenge check', 'Protein check at night · journal nudge']],
+      ['DATA', ['"Show my journal entries" (all, by category)', '"Open my finances / diet / habits / agenda"', '"Build a slide of …" (any stat, built live)', '"What did I eat yesterday?" · "How\'s my week?"']],
+      ['CONTROL', ['"Play …" · "skip" · "pause" · "I can\'t hear the music"', '"Play it on my phone / laptop"', '"Open YouTube / a video / a map" inside Spikey', '"Let\'s start backtesting" · "long win 2R"']],
+      ['SYSTEM', ['"Status report"', '"Economic news today?"', '"What have you learned?" · "from now on …"', '"Stop" mid-sentence · "close it"']]
+    ];
+    el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h2 style="font:600 13px var(--f-mono);letter-spacing:.34em;color:var(--a2)">WHAT SPIKEY CAN DO</h2><button id="capClose" style="font:600 11px var(--f-mono);letter-spacing:.14em;padding:8px 12px;border:1px solid var(--line);background:transparent;color:var(--txt);border-radius:8px;cursor:pointer">CLOSE ✕</button></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">${G.map(([h, l]) => `<div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:rgba(255,255,255,.025)"><div style="font:600 11px var(--f-mono);letter-spacing:.26em;color:var(--a);margin-bottom:8px">${h}</div>${l.map(x => `<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:14px;color:var(--hi)">${esc(x)}</div>`).join('')}</div>`).join('')}</div>`;
+    window.dispatchEvent(new CustomEvent('spikey-screen', {detail:'caps'}));
+    el.style.display = 'block';
+    el.querySelector('#capClose').onclick = () => el.style.display = 'none';
+    clearTimeout(el._t); el._t = setTimeout(() => el.style.display = 'none', 60000);
+  }
+
+  window.JV_assist = {
+    quick, protocol, status, daySummary, loadNews, list, cancel, setFocus, focused,
+    timer: (ms, label) => add('timer', Date.now() + ms, label), reminder: (at, label) => add('reminder', at, label), alarm: (at, label) => add('alarm', at, label),
+    parseDur, parseClock, items: () => items.slice(), showCapabilities, _proactive: proactive
+  };
+  drawChip();
+})();
+
+</script>
+<script>
 /* ===== Setup panel: Claude key, Spotify, Cole ===== */
 (() => {
   if (new URLSearchParams(location.search).get('screen') === 'side') return;
@@ -2996,6 +3352,74 @@ HTML>>>`;
       if (!list[idx] || list[idx].id !== want.id){ const i = list.findIndex(s => s.id === want.id); if (i >= 0){ go(i); holdUntil = want.until; } else want = null; }
     }
   }, 400);
+})();
+
+</script>
+<script>
+/* ===== On-device self-test: open Spikey with ?selftest=1 and it runs real commands end to end, then shows PASS/FAIL ===== */
+(() => {
+  const Q = new URLSearchParams(location.search);
+  if (!Q.get('selftest') || Q.get('screen') === 'side') return;
+  const $ = id => document.getElementById(id);
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const reply = () => (($('reply') || {}).textContent || '').trim();
+  const slide = () => (((document.querySelector('#slides .slide.on h2') || {}).innerText || 'logo').split('\n')[0]).trim().toUpperCase();
+  const open = sel => !!document.querySelector(sel);
+  const idle = async (max = 30000) => { const t0 = Date.now(); await wait(400); while (Date.now() - t0 < max && window.JV && (window.JV.mode === 'thinking' || window.JV.speaking)) await wait(250); await wait(500); };
+  async function cmd(text, max){
+    const box = $('cmd'); if (!box) throw new Error('no command box');
+    box.value = text; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+    await idle(max);
+    if (window.JV_stop && window.JV && window.JV.speaking) window.JV_stop();   // keep the run moving
+    return reply();
+  }
+  const TESTS = [
+    ['status report', async () => { const r = await cmd('status report', 20000); return [/brain online/i.test(r) && /cole synced/i.test(r), r]; }],
+    ['timer set + cancel', async () => { await cmd('set a 1 minute timer for selftest'); const set = window.JV_assist.items().some(i => i.label === 'selftest'); await cmd('cancel the selftest timer'); return [set && !window.JV_assist.items().some(i => i.label === 'selftest'), 'set=' + set]; }],
+    ['open journal', async () => { await cmd('open my journal'); return [window.JV_journal.isOpen(), reply()]; }],
+    ['close journal + open backtest (one sentence)', async () => { await cmd('close my journal and open the backtesting screen'); return [!window.JV_journal.isOpen() && open('#btPanel.open'), 'journal=' + window.JV_journal.isOpen() + ' backtest=' + open('#btPanel.open')]; }],
+    ['minimize backtest', async () => { await cmd('minimize backtest'); return [!open('#btPanel.open'), reply()]; }],
+    ['open finances slide', async () => { await cmd('open my finances'); await wait(900); return [slide() === 'MONEY', slide()]; }],
+    ['close diet + open habits', async () => { await cmd('open my diet tracking'); await wait(900); const a = slide(); await cmd('close my diet tracking and open my habits'); await wait(900); return [a === 'FUEL' && slide() === 'HABITS', a + ' → ' + slide()]; }],
+    ['close it', async () => { await cmd('close it'); await wait(900); return [slide() === 'LOGO', slide()]; }],
+    ['capabilities screen', async () => { await cmd('what can you do'); const s = ($('capPanel') || {}).style; const ok = s && s.display === 'block'; await cmd('close it'); return [ok, 'shown=' + ok]; }],
+    ['focus mode on/off', async () => { await cmd('focus mode'); const on = window.JV_assist.focused(); await cmd('focus off'); return [on && !window.JV_assist.focused(), 'on=' + on]; }],
+    ['spotify: where is music', async () => { if (!(window.JV_spotify && window.JV_spotify.connected())) return [false, 'Spotify not connected']; const r = await cmd("where's the music playing", 20000); return [/spotify is/i.test(r), r]; }],
+    ['brain answers (Claude)', async () => { const r = await cmd('quick math, what is 12 times 12', 30000); return [/144|one hundred forty.?four/i.test(r), r]; }],
+    ['economic news (Claude + web)', async () => { const r = await cmd('any economic news today', 60000); return [/news|calendar|event|cpi|fomc|claims/i.test(r), r]; }],
+    ['learned memory', async () => { const r = await cmd('what have you learned'); return [/learned|nothing yet/i.test(r), r]; }],
+    ['agenda from Cole', async () => { await cmd('open my to do list'); await wait(900); return [slide() === 'AGENDA', slide()]; }]
+  ];
+
+  const panel = document.createElement('section');
+  panel.style.cssText = 'position:fixed;left:14px;top:66px;z-index:60;width:min(640px,46vw);max-height:82vh;overflow:auto;background:#07060a;border:1px solid var(--a2);border-radius:12px;padding:12px 14px;font:13px/1.45 var(--f-mono);color:var(--txt)';
+  panel.innerHTML = '<b style="color:var(--a2);letter-spacing:.2em">SPIKEY SELF-TEST</b><div id="stRows" style="margin-top:8px"></div>';
+  async function runAll(){
+    document.body.appendChild(panel);
+    const rows = panel.querySelector('#stRows'), results = [];
+    for (const [name, fn] of TESTS){
+      const row = document.createElement('div'); row.style.cssText = 'padding:5px 0;border-bottom:1px solid rgba(255,255,255,.08)';
+      row.innerHTML = `<span style="color:var(--mute)">… ${name}</span>`; rows.appendChild(row);
+      let ok = false, info = '';
+      try{ [ok, info] = await fn(); }catch(e){ ok = false; info = 'ERROR ' + (e.message || e); }
+      results.push({name, ok, info: String(info).slice(0, 160)});
+      row.innerHTML = `<b style="color:${ok ? 'var(--good)' : 'var(--red, #ff2d55)'}">${ok ? 'PASS' : 'FAIL'}</b> ${name}<div style="color:var(--mute);font-size:11.5px">${String(info).replace(/</g, '&lt;').slice(0, 160)}</div>`;
+    }
+    const pass = results.filter(r => r.ok).length;
+    const sum = document.createElement('div'); sum.style.cssText = 'margin-top:10px;font:600 15px var(--f-display);color:' + (pass === results.length ? 'var(--good)' : 'var(--red, #ff2d55)');
+    sum.textContent = `${pass}/${results.length} passed · ${new Date().toLocaleTimeString()}`; panel.appendChild(sum);
+    try{ localStorage.setItem('spikey.selftest', JSON.stringify({at: Date.now(), pass, total: results.length, results})); }catch{}
+    if (window.JV_coleSaveDoc) window.JV_coleSaveDoc('spikey/selftest', {at: Date.now(), pass, total: results.length, results}).catch(() => {});
+    if (window.JV_say) window.JV_say(pass === results.length ? `Self test complete. All ${pass} checks passed.` : `Self test complete. ${pass} of ${results.length} passed.`);
+  }
+  // wait for boot + Cole, skip the long opening briefing
+  (async () => {
+    await wait(9000);
+    if (window.JV_stop && window.JV && window.JV.speaking) window.JV_stop();
+    try{ await Promise.race([window.JV_coleReady, wait(8000)]); }catch{}
+    await wait(1500);
+    runAll();
+  })();
 })();
 
 </script>
