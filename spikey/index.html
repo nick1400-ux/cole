@@ -1995,6 +1995,9 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
     setMode('idle', 'SYSTEMS ONLINE');
     await new Promise(r => setTimeout(r, 1500));
     await Promise.race([window.JV_coleReady || Promise.resolve(), new Promise(r => setTimeout(r, 6000))]);   // let Cole's numbers load first
+    // a quiet self-update (new version published) shouldn't replay the whole docking briefing
+    let silent = false; try{ silent = sessionStorage.getItem('spikey.silentReload') === '1'; sessionStorage.removeItem('spikey.silentReload'); }catch{}
+    if (silent){ setMode('idle', 'UPDATED'); return; }
     const p = opening(`${greetingWord()}, ${CONFIG.name}. Docking complete. All systems online.`);
     setTimeout(() => {
       if ('speechSynthesis' in window && !JV.speaking && !speechSynthesis.speaking){ const a = $('activate'); if (a) a.classList.add('show'); }
@@ -2057,7 +2060,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
       if (base === null){ base = s; return; }
       if (s !== base){
         const J = window.JV || {};
-        if (J.mode === 'idle' && !J.speaking && !J.awake && !document.querySelector('#setupPanel.show')) location.reload();
+        if (J.mode === 'idle' && !J.speaking && !J.awake && !document.querySelector('#setupPanel.show')){ try{ sessionStorage.setItem('spikey.silentReload', '1'); }catch{} location.reload(); }
       }
     }catch{}
   }
