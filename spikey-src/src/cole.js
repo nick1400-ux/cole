@@ -9,6 +9,7 @@
   const pad = n => String(n).padStart(2, '0');
   const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   const money = n => (n > 0 ? '+' : n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
+  const fmtR = n => { n = Math.round(n * 100) / 100; return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n) + 'R'; };
   const speakMoney = n => '$' + Math.abs(Math.round(n)).toLocaleString();
   const tradeClean = t => RULES.every(k => t.rules && t.rules[k]);
   const dayClean = trades => trades.length <= 2 && trades.every(tradeClean);
@@ -35,11 +36,13 @@
     const days = weekKeys().map(w => {
       const trades = (byKey[w.key] && Array.isArray(byKey[w.key].trades)) ? byKey[w.key].trades : [];
       const pnl = trades.reduce((s, t) => s + (+t.pnl || 0), 0);
-      return {...w, trades, pnl, clean: trades.length ? dayClean(trades) : null, today: w.key === today};
+      const withR = trades.filter(t => t.r !== '' && t.r != null && !isNaN(+t.r));
+      const r = withR.reduce((s, t) => s + (+t.r), 0);
+      return {...w, trades, pnl, r, noR: trades.length - withR.length, clean: trades.length ? dayClean(trades) : null, today: w.key === today};
     });
     const traded = days.filter(d => d.trades.length);
     return {
-      days, total: days.reduce((s, d) => s + d.pnl, 0),
+      days, total: days.reduce((s, d) => s + d.pnl, 0), totalR: days.reduce((s, d) => s + d.r, 0), noR: days.reduce((s, d) => s + d.noR, 0),
       nTrades: days.reduce((s, d) => s + d.trades.length, 0),
       tradedDays: traded.length, cleanDays: traded.filter(d => d.clean).length,
       today: days.find(d => d.today)
@@ -49,23 +52,24 @@
   function render(w){
     week = w;
     const tot = $('pnlTotal'); if (!tot) return;
-    tot.textContent = w.nTrades ? money(w.total) : '$0';
-    tot.className = w.total > 0 ? 'up' : w.total < 0 ? 'down' : '';
+    // shown in R (risk multiples), not dollars
+    tot.textContent = fmtR(w.nTrades ? w.totalR : 0);
+    tot.className = w.totalR > 0 ? 'up' : w.totalR < 0 ? 'down' : '';
     $('pnlSub').innerHTML = w.nTrades
-      ? `${w.nTrades} trade${w.nTrades === 1 ? '' : 's'} this week<br>${w.cleanDays}/${w.tradedDays} clean day${w.tradedDays === 1 ? '' : 's'}`
+      ? `${w.nTrades} trade${w.nTrades === 1 ? '' : 's'} this week<br>${w.cleanDays}/${w.tradedDays} clean day${w.tradedDays === 1 ? '' : 's'}${w.noR ? `<br><span title="trades logged without an R value">${w.noR} without R</span>` : ''}`
       : 'no trades logged<br>this week yet';
     const show = w.days.filter((d, i) => i < 5 || d.trades.length);    // Mon–Fri, plus weekend days you actually traded
-    const max = Math.max(1, ...show.map(d => Math.abs(d.pnl)));
+    const max = Math.max(1, ...show.map(d => Math.abs(d.r)));
     $('pnlBars').innerHTML = show.map(d => {
-      const h = d.trades.length ? Math.max(4, Math.abs(d.pnl) / max * 50) : 0;
-      const cls = !d.trades.length || d.pnl === 0 ? 'flat' : d.pnl > 0 ? 'up' : 'down';
+      const h = d.trades.length ? Math.max(4, Math.abs(d.r) / max * 50) : 0;
+      const cls = !d.trades.length || d.r === 0 ? 'flat' : d.r > 0 ? 'up' : 'down';
       const state = d.clean === null ? '' : d.clean ? 'clean' : 'broken';
-      return `<div class="pb ${d.today ? 'today' : ''} ${state}" title="${d.key}"><div class="col"><i class="${cls}" style="height:${h}%"></i></div><span>${d.trades.length ? money(d.pnl) : '·'}</span><small>${d.label}</small></div>`;
+      return `<div class="pb ${d.today ? 'today' : ''} ${state}" title="${d.key}"><div class="col"><i class="${cls}" style="height:${h}%"></i></div><span>${d.trades.length ? fmtR(d.r) : '·'}</span><small>${d.label}</small></div>`;
     }).join('');
-    const t = w.today || {trades:[], pnl:0};
+    const t = w.today || {trades:[], r:0};
     $('pnlTodayTrades').textContent = `${t.trades.length}/2`;
-    $('pnlTodayAmt').textContent = money(t.pnl) || '$0';
-    $('pnlTodayAmt').style.color = t.pnl > 0 ? 'var(--good)' : t.pnl < 0 ? 'var(--red)' : '';
+    $('pnlTodayAmt').textContent = fmtR(t.r || 0);
+    $('pnlTodayAmt').style.color = t.r > 0 ? 'var(--good)' : t.r < 0 ? 'var(--red)' : '';
   }
   window.JV_renderPnl = rows => render(compute(rows));      // also used by tests
   // ---- write to Cole: sort what Nick said (same rules as Cole) and save it into today's page ----
