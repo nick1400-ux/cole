@@ -1675,6 +1675,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
       if (window.JV_journal && window.JV_journal.isOpen()){ window.JV_journal.hide(); did = true; }
       if (window.JV_custom && window.JV_custom.isOpen()){ window.JV_custom.closeScreen(); did = true; }
       if (window.JV_backtest && window.JV_backtest.active() && document.querySelector('#btPanel.open')){ window.JV_backtest.hide(); did = true; }
+      if (!did && window.JV_slides && document.querySelector('#slides .slide.on')){ window.JV_slides.home(); return; }
       if (did) return say('Closed.');
     }
     // --- journal: every entry, grouped by category, on its own screen ---
@@ -1717,11 +1718,19 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
     if (window.JV_slides){
       if (/^(stop|pause|hold) (the )?slides$|^(show )?(the )?logo$/.test(text)){ window.JV_slides.stop(); return; }
       if (/^(start|resume|play) (the )?slides$|^next slide$/.test(text)){ window.JV_slides.resume(); return; }
-      const sm = text.match(/^(?:show|open|pull up|go to|put up)(?: me)?(?: my| the)? (protein|fuel|macros|food|calories|nutrition|money|bank|banks|accounts|spending|budget|habits|trading|trades|discipline|agenda|to ?dos?|schedule)(?: slide| page)?$/);
-      if (sm){
-        const id = {protein:'fuel',fuel:'fuel',macros:'fuel',food:'fuel',calories:'fuel',nutrition:'fuel',money:'money',bank:'money',banks:'money',accounts:'money',spending:'money',budget:'money',habits:'habits',trading:'trading',trades:'trading',discipline:'trading',agenda:'agenda',schedule:'agenda'}[sm[1]] || 'agenda';
-        window.JV_slides.show(id); return;
-      }
+      // built-in slides by any everyday name ("open my finances", "close my diet tracking")
+      const SLIDE_WORDS = [
+        ['fuel', /^(diet|diet tracking|diet tracker|protein|protein intake|fuel|macros|food|food tracking|meals?|calories|nutrition|eating|bulk|lean bulk)$/],
+        ['money', /^(money|finances?|financials?|bank|banks|bank accounts?|accounts|spending|budget|expenses|cash)$/],
+        ['trading', /^(trading|trades|discipline|p ?(and|&|n) ?l|pnl|trading week|week)$/],
+        ['habits', /^(habits?|habit tracker|habit tracking|gym|streaks?)$/],
+        ['agenda', /^(agenda|to ?dos?|to ?do list|schedule|objectives|tasks|day|plan)$/]
+      ];
+      const slideOf = w => { w = String(w || '').replace(/\b(slide|page|screen|tab|tracking screen)$/, '').trim(); const hit = SLIDE_WORDS.find(([, re]) => re.test(w)); return hit ? hit[0] : null; };
+      let sm = text.match(/^(?:show|open|pull up|go to|put up|bring up|switch to|take me to)(?: me)?(?: to)?(?: my| the)? (.+)$/);
+      if (sm && slideOf(sm[1])){ window.JV_slides.show(slideOf(sm[1]), 45000); return; }
+      sm = text.match(/^(?:close|hide|exit|minimi[sz]e|get rid of|take down|put away)(?: out of)?(?: my| the| that)? (.+)$/);
+      if (sm && slideOf(sm[1])){ window.JV_slides.home(); return; }
       // slides Spikey built on the spot
       if (window.JV_custom){
         const C = window.JV_custom;
@@ -2855,10 +2864,13 @@ HTML>>>`;
     host.appendChild(el);
     requestAnimationFrame(() => requestAnimationFrame(() => { el.classList.add('on'); animateIn(el); }));
   }
+  // Spikey takes the stage while it talks, thinks, or was just called by name; NOT while it's quietly
+  // waiting for a follow-up (conversation mode), or the slide you asked for would vanish
+  const busy = () => { const JV = window.JV || {}; return !!(JV.speaking || JV.mode === 'thinking' || (JV.mode === 'listening' && !JV.convo)); };
   function tick(){
     const JV = window.JV || {};
     // Spikey takes the stage whenever it's listening or talking
-    if (JV.speaking || JV.mode === 'listening' || JV.mode === 'thinking'){ if (idx !== 0) go(0); holdUntil = Date.now() + 6000; return; }
+    if (busy()){ if (idx !== 0) go(0); holdUntil = Date.now() + 6000; return; }
     if (Date.now() < holdUntil) return;
     let n = idx + 1; if (list[n % list.length].id === 'backtest') n++;   // backtest lives in its own panel now
     go(n);
@@ -2871,9 +2883,10 @@ HTML>>>`;
     return i;
   };
   window.JV_slides = {
-    show(name, ms){ list = all(); drawDots(); const i = findIdx(name); if (i >= 0){ go(i); holdUntil = Date.now() + (ms || 30000); want = {id:list[i].id, until:holdUntil}; return true; } return false; },
+    show(name, ms){ list = all(); drawDots(); const i = findIdx(name); if (i >= 0){ window.dispatchEvent(new CustomEvent('spikey-screen', {detail:'slide'})); go(i); holdUntil = Date.now() + (ms || 30000); want = {id:list[i].id, until:holdUntil}; return true; } return false; },
     next(){ go(idx + 1); holdUntil = Date.now() + 30000; },
     stop(){ go(0); holdUntil = Date.now() + 10 * 60 * 1000; },
+    home(){ want = null; go(0); holdUntil = Date.now() + 20000; },
     resume(){ holdUntil = 0; go(idx + 1); },
     sync(){ const id = list[idx] && list[idx].id; list = all(); const j = list.findIndex(s => s.id === id); idx = j >= 0 ? j : 0; drawDots(); },
     names: () => list.filter(s => s.id !== 'spikey' && s.id !== 'backtest').map(s => s.custom ? s.name : s.id)
@@ -2885,8 +2898,7 @@ HTML>>>`;
   holdUntil = Date.now() + 25000;          // let the opening play first
   timer = setInterval(tick, DWELL);
   setInterval(() => {
-    const JV = window.JV || {}, busy = JV.speaking || JV.mode === 'listening' || JV.mode === 'thinking';
-    if (busy){ if (idx !== 0){ go(0); } holdUntil = Math.max(holdUntil, Date.now() + 6000); if (want) want.until = Math.max(want.until, Date.now() + 25000); return; }
+    if (busy()){ if (idx !== 0){ go(0); } holdUntil = Math.max(holdUntil, Date.now() + 6000); if (want) want.until = Math.max(want.until, Date.now() + 25000); return; }
     if (want){
       if (Date.now() > want.until){ want = null; return; }
       if (!list[idx] || list[idx].id !== want.id){ const i = list.findIndex(s => s.id === want.id); if (i >= 0){ go(i); holdUntil = want.until; } else want = null; }
