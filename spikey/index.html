@@ -967,7 +967,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     {name:'open_website', description:'Open any web page in a new window.', input_schema:{type:'object', properties:{url:{type:'string'}}, required:['url']}},
     {name:'show_chart', description:'Show a big chart inside Spikey\'s own screen. Use names like NAS100, US30, SPX500, GOLD, BTC, OIL, DXY.', input_schema:{type:'object', properties:{symbol:{type:'string'}}, required:['symbol']}},
     {name:'show_slide', description:'Show one of Spikey\'s visual slides on the center screen: fuel (protein, calories, meals), trading (week P&L, discipline), money (accounts, food budget, spending), habits (gym, reel, family, slips) or agenda (to-dos).', input_schema:{type:'object', properties:{slide:{type:'string', enum:['fuel','trading','money','habits','agenda']}}, required:['slide']}},
-    {name:'backtest', description:'Nick\'s backtesting session (he backtests on another screen; Spikey only keeps score): start the session, log a backtest trade, get stats, undo the last trade, or end the session. Use for anything about backtesting or replay.', input_schema:{type:'object', properties:{action:{type:'string', enum:['start','log','summary','undo','end']}, direction:{type:'string', enum:['long','short']}, outcome:{type:'string', enum:['win','loss','breakeven']}, r:{type:'number', description:'R multiple, e.g. 2 for a 2R win'}}, required:['action']}},
+    {name:'backtest', description:'Nick\'s backtesting session (he backtests on another screen; Spikey only keeps score): start the session, log a backtest trade, get stats, undo the last trade, or end the session. Use for anything about backtesting or replay.', input_schema:{type:'object', properties:{action:{type:'string', enum:['start','show','minimize','log','summary','undo','end']}, direction:{type:'string', enum:['long','short']}, outcome:{type:'string', enum:['win','loss','breakeven']}, r:{type:'number', description:'R multiple, e.g. 2 for a 2R win'}}, required:['action']}},
     {name:'add_task', description:'Add an objective to Spikey\'s on-screen list.', input_schema:{type:'object', properties:{text:{type:'string'}}, required:['text']}},
     {name:'complete_task', description:'Mark one of Spikey\'s objectives done, by its number (1 = first).', input_schema:{type:'object', properties:{number:{type:'integer'}}, required:['number']}},
     {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. Use when he says log, journal, note, tell Cole, or describes his trades, food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
@@ -998,6 +998,8 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
         case 'backtest': {
           const B = window.JV_backtest; if (!B) return 'Backtest mode is not available.';
           if (input.action === 'start') return B.open().message;
+          if (input.action === 'show'){ B.show(true); return 'Backtest screen is up.'; }
+          if (input.action === 'minimize'){ B.hide(); return 'Minimized; session still running.'; }
           if (input.action === 'log') return B.logTrade({dir:input.direction, outcome:input.outcome || 'win', r:input.r});
           if (input.action === 'undo') return B.undo();
           if (input.action === 'end') return B.end();
@@ -1432,7 +1434,9 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     // --- backtesting ---
     if (window.JV_backtest){
       const B = window.JV_backtest;
-      if (/^(open|start|pull up|launch|bring up|begin)( my| the| a)? (backtest|backtesting|back test|back testing|replay)( screen| session| window)?$/.test(text)) return say(B.open().message);
+      if (/^(let'?s |lets |time to )?(open|start|pull up|launch|bring up|begin|do)?( my| the| a| some)? ?(backtest|backtesting|back test|back testing|replay)( screen| session| window| mode)?$/.test(text) && !/^(backtest|back test)$/.test(text)) return say(B.open().message);
+      if (/^(minimi[sz]e|hide|close)( the)? (backtest|backtesting|back test)( screen)?$/.test(text)){ B.hide(); return say('Minimized. The session is still running.'); }
+      if (/^(show|bring back|open)( the| my)? (backtest|backtesting|back test)( screen| stats)?$/.test(text) && B.active()){ B.show(true); return; }
       if (/^(end|stop|finish|close|wrap up)( my| the)? (backtest|backtesting|back test|back testing)( session)?$/.test(text)) return say(B.end());
       if (/^undo( the)?( last)? (backtest|back test)( trade)?$|^(scratch|delete) that( backtest)?$/.test(text) && B.active()) return say(B.undo());
       if (/^(how('?s| is)( my)? (backtest|back test|backtesting)( going)?|(backtest|back test) (stats|summary|status|score))$/.test(text)) return say(B.summary());
@@ -1703,8 +1707,8 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   function openWindow(){
     const was = !!session();
     if (!was) start();
-    if (window.JV_slides) window.JV_slides.show('backtest');
-    return {ok:true, message: was ? 'Your backtest session is already running. I am watching it.' : 'Backtest session started. Log your trades as you go and I will keep score on this screen.'};
+    show(true);
+    return {ok:true, message: was ? 'Your backtest session is already running.' : 'Backtest panel is up. Log your trades as you go and I will keep score.'};
   }
 
   // ---------- the session ----------
@@ -1744,7 +1748,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     const s = session(); if (!s) return 'No backtest session is running.';
     const st = stats(s);
     const hist = get('history', []); hist.push({...s, ended: Date.now()}); put('history', hist.slice(-60));
-    put('session', null); persist(s); render();
+    put('session', null); persist(s); shown = false; render();
     const m = Math.round(st.mins);
     return st.n ? `Session ended. ${st.n} trade${st.n === 1 ? '' : 's'} in ${m} minute${m === 1 ? '' : 's'}, ${st.winRate} percent wins, ${(st.totalR >= 0 ? 'plus ' : 'minus ') + Math.abs(+st.totalR.toFixed(2))} R, profit factor ${isFinite(st.pf) ? st.pf.toFixed(2) : 'perfect'}.` : 'Session ended. No trades logged.';
   }
@@ -1784,14 +1788,85 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   .bt-curve{width:100%;height:140px;display:block;margin-top:8px}
   .bt-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
   .bt-row i{font-style:normal;font:500 11px var(--f-mono);padding:4px 7px;border-radius:5px;background:rgba(255,255,255,.06);color:var(--mute)}
-  .bt-row i.w{background:rgba(61,255,143,.18);color:var(--good)} .bt-row i.l{background:rgba(255,34,51,.22);color:#ff8a95}`;
+  .bt-row i.w{background:rgba(61,255,143,.18);color:var(--good)} .bt-row i.l{background:rgba(255,34,51,.22);color:#ff8a95}
+  #btPanel{position:fixed;inset:66px 14px 66px 14px;z-index:18;display:grid;grid-template-columns:1.45fr 1fr;grid-template-rows:auto auto 1fr auto;gap:12px;
+    background:linear-gradient(160deg,rgba(26,10,16,.97),rgba(8,7,12,.98));border:1px solid var(--a2);border-radius:14px;padding:16px 18px;
+    box-shadow:0 0 60px rgba(181,123,255,.18);opacity:0;transform:scale(.96) translateY(14px);pointer-events:none;transition:opacity .45s,transform .6s cubic-bezier(.2,.9,.2,1)}
+  #btPanel.open{opacity:1;transform:none;pointer-events:auto}
+  #btPanel .hd{grid-column:1/-1;display:flex;align-items:center;gap:14px}
+  #btPanel .hd h2{font:600 13px var(--f-mono);letter-spacing:.34em;color:var(--a2)}
+  #btPanel .hd .tm{font:500 26px var(--f-display);color:var(--hi);letter-spacing:-.02em}
+  #btPanel .hd .sp{flex:1}
+  #btPanel .kp{grid-column:1/-1;display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+  #btPanel .kp div{background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  #btPanel .kp span{display:block;font:500 9.5px var(--f-mono);letter-spacing:.2em;color:var(--mute)}
+  #btPanel .kp b{font:500 clamp(22px,2.2vw,34px) var(--f-display);color:var(--hi)} #btPanel .kp b.up{color:var(--good)} #btPanel .kp b.down{color:var(--red)}
+  #btPanel .cv{background:rgba(255,255,255,.025);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:0;display:flex;flex-direction:column}
+  #btPanel .cv .bt-curve{flex:1;height:auto;min-height:120px}
+  #btPanel .lst{grid-row:3/5;grid-column:2;background:rgba(255,255,255,.025);border:1px solid var(--line);border-radius:10px;padding:10px 12px;overflow:auto;min-height:0}
+  #btPanel table{width:100%;border-collapse:collapse;font:400 13px var(--f-mono)}
+  #btPanel th{font:500 9.5px var(--f-mono);letter-spacing:.18em;color:var(--mute);text-align:left;padding:4px 6px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#120a10}
+  #btPanel td{padding:6px;border-bottom:1px solid rgba(255,255,255,.05);color:var(--txt)} #btPanel td.w{color:var(--good)} #btPanel td.l{color:#ff8a95}
+  #btPanel .ctl{display:flex;flex-direction:column;gap:8px}
+  #btPanel .row{display:flex;gap:8px;align-items:stretch}
+  #btPanel button{font:600 12px var(--f-mono);letter-spacing:.12em;padding:12px 10px;border:1px solid var(--line);background:rgba(255,255,255,.04);color:var(--txt);cursor:pointer;border-radius:8px;flex:1}
+  #btPanel button:hover{border-color:var(--a2)}
+  #btPanel button.win{color:var(--good);border-color:rgba(61,255,143,.4)} #btPanel button.loss{color:#ff8a95;border-color:rgba(255,34,51,.45)}
+  #btPanel .dir{display:flex;gap:6px;flex:none} #btPanel .dir button{flex:none;width:86px} #btPanel .dir button.on{background:var(--a2);color:#000;border-color:var(--a2)}
+  #btPanel input{flex:1;background:rgba(255,255,255,.04);border:1px solid var(--line);color:var(--hi);font:400 13px var(--f-mono);padding:10px;border-radius:8px;outline:none}
+  #btPanel .hint{font:400 11.5px var(--f-mono);color:var(--mute)}
+  #btPanel .x{flex:none;padding:8px 12px}
+  #btBadge{cursor:pointer}`;
   document.head.appendChild(css);
   const badge = document.createElement('span'); badge.id = 'btBadge'; badge.className = 'chip';
   const top = document.querySelector('.top'), state = $('stateLabel');
   if (top && state) top.insertBefore(badge, state);
-  badge.onclick = () => window.JV_slides && window.JV_slides.show('backtest');
+  badge.onclick = () => show(!shown);
+  // ---------- the Backtest panel (right column, slides in during a session) ----------
+  const panel = document.createElement('section'); panel.id = 'btPanel';
+  document.body.appendChild(panel);
+  let dirSel = 'long', shown = false;
+  const show = v => { shown = v; drawPanel(); };
+  function drawPanel(){
+    const s = session(), st = stats(s);
+    const on = !!s && shown;
+    panel.classList.toggle('open', on);
+    if (!s){ panel.innerHTML = ''; return; }
+    if (!on) return;
+    const mins = Math.round(st.mins), cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+    let acc = 0; const rows = s.trades.map((t, i) => { acc += t.r; return {i:i + 1, t, acc}; }).reverse();
+    const keepNote = (panel.querySelector('#btNote') || {}).value || '';
+    panel.innerHTML = `
+      <div class="hd"><h2>BACKTEST</h2><span class="tm">${Math.floor(mins / 60) ? Math.floor(mins / 60) + 'h ' : ''}${mins % 60}m</span>
+        <span class="hint">${st.mins >= 10 ? st.perHour.toFixed(1) + ' trades/hr · ' : ''}${st.longs}L / ${st.shorts}S · best streak ${st.bestStreak}</span><span class="sp"></span>
+        <button class="x" id="btMin">MINIMIZE</button><button class="x loss" id="btEnd">END SESSION</button></div>
+      <div class="kp"><div><span>TRADES</span><b>${st.n}</b></div><div><span>WIN RATE</span><b>${st.winRate}%</b></div>
+        <div><span>TOTAL R</span><b class="${cls(st.totalR)}">${(st.totalR >= 0 ? '+' : '') + st.totalR.toFixed(2)}</b></div>
+        <div><span>AVG R</span><b class="${cls(st.avgR)}">${(st.avgR >= 0 ? '+' : '') + st.avgR.toFixed(2)}</b></div>
+        <div><span>PROFIT FACTOR</span><b>${st.n ? (isFinite(st.pf) ? st.pf.toFixed(2) : '∞') : '—'}</b></div>
+        <div><span>W / L / BE</span><b>${st.wins}/${st.losses}/${st.be}</b></div></div>
+      <div class="cv"><span class="hint">EQUITY CURVE (R)</span>${curve(s.trades)}</div>
+      <div class="lst"><table><thead><tr><th>#</th><th>SIDE</th><th>RESULT</th><th>TOTAL</th><th>NOTE</th></tr></thead><tbody>
+        ${rows.length ? rows.map(x => `<tr><td>${x.i}</td><td>${x.t.dir ? x.t.dir.toUpperCase() : '—'}</td><td class="${x.t.r > 0 ? 'w' : x.t.r < 0 ? 'l' : ''}">${(x.t.r > 0 ? '+' : '') + x.t.r}R</td><td>${(x.acc >= 0 ? '+' : '') + (+x.acc.toFixed(2))}R</td><td>${String(x.t.note || '').replace(/</g, '&lt;')}</td></tr>`).join('') : '<tr><td colspan="5" style="color:var(--mute);padding:14px 6px">No trades yet. Say “long win 2R”, or use the buttons.</td></tr>'}
+      </tbody></table></div>
+      <div class="ctl">
+        <div class="row"><div class="dir"><button data-d="long" class="${dirSel === 'long' ? 'on' : ''}">LONG</button><button data-d="short" class="${dirSel === 'short' ? 'on' : ''}">SHORT</button></div>
+          <input id="btNote" placeholder="note (optional): setup, reason, mistake…" value="${keepNote.replace(/"/g, '&quot;')}"></div>
+        <div class="row"><button class="win" data-w="1">WIN +1R</button><button class="win" data-w="1.5">WIN +1.5R</button><button class="win" data-w="2">WIN +2R</button><button class="win" data-w="3">WIN +3R</button></div>
+        <div class="row"><button class="loss" data-o="loss">LOSS −1R</button><button data-o="be">BREAKEVEN</button><button data-o="undo">UNDO LAST</button></div>
+        <div class="hint">Voice works too: “long win 2R” · “short loss” · “breakeven” · “undo” · “how's my backtest” · “minimize backtest”</div>
+      </div>`;
+    const note = () => { const n = panel.querySelector('#btNote'); const v = n ? n.value.trim() : ''; if (n) n.value = ''; return v; };
+    panel.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { dirSel = b.dataset.d; drawPanel(); });
+    panel.querySelectorAll('[data-w]').forEach(b => b.onclick = () => logTrade({dir:dirSel, outcome:'win', r:+b.dataset.w, note:note()}));
+    panel.querySelectorAll('[data-o]').forEach(b => b.onclick = () => b.dataset.o === 'undo' ? undo() : logTrade({dir:dirSel, outcome:b.dataset.o === 'be' ? 'breakeven' : 'loss', r:1, note:note()}));
+    const ni = panel.querySelector('#btNote'); if (ni) ni.addEventListener('keydown', e => e.stopPropagation());
+    panel.querySelector('#btMin').onclick = () => show(false);
+    panel.querySelector('#btEnd').onclick = () => { const m = end(); if (window.JV_say) window.JV_say(m); };
+  }
   function render(){
     const st = stats();
+    drawPanel();
     badge.classList.toggle('on', !!st);
     if (st) badge.textContent = `BACKTEST ${Math.floor(st.mins / 60) ? Math.floor(st.mins / 60) + 'h ' : ''}${Math.round(st.mins % 60)}m · ${st.n} · ${(st.totalR >= 0 ? '+' : '') + st.totalR.toFixed(1)}R`;
     window.dispatchEvent(new Event('backtest-update'));
@@ -1828,7 +1903,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     return d.screens.map(s => ({label:(s.isInternal ? 'Laptop' : (s.label || 'Screen')), left:s.availLeft, top:s.availTop, width:s.availWidth, height:s.availHeight, internal:s.isInternal, current:s === d.currentScreen}));
   }
 
-  window.JV_backtest = {open:openWindow, start, end, logTrade, undo, summary, stats, cfg, saveCfg, screens, active:() => !!session()};
+  window.JV_backtest = {show, hide:() => show(false), open:openWindow, start, end, logTrade, undo, summary, stats, cfg, saveCfg, screens, active:() => !!session()};
 
 })();
 
@@ -2092,11 +2167,10 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   function tick(){
     const JV = window.JV || {};
     // Spikey takes the stage whenever it's listening or talking
-    const bt = window.JV_backtest && window.JV_backtest.active();
-    if (!bt && (JV.speaking || JV.mode === 'listening' || JV.mode === 'thinking')){ if (idx !== 0) go(0); holdUntil = Date.now() + 6000; return; }
-    if (window.JV_backtest && window.JV_backtest.active()){ const b = SLIDES.findIndex(s => s.id === 'backtest'); if (idx !== b) go(b); return; }
+    if (JV.speaking || JV.mode === 'listening' || JV.mode === 'thinking'){ if (idx !== 0) go(0); holdUntil = Date.now() + 6000; return; }
     if (Date.now() < holdUntil) return;
-    go(idx + 1);
+    let n = idx + 1; if (SLIDES[n % SLIDES.length].id === 'backtest') n++;   // backtest lives in its own panel now
+    go(n);
   }
   window.JV_slides = {
     show(name){ const i = SLIDES.findIndex(s => s.id === name); if (i >= 0){ go(i); holdUntil = Date.now() + 30000; return true; } return false; },
@@ -2110,8 +2184,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   go(0);
   holdUntil = Date.now() + 25000;          // let the opening play first
   timer = setInterval(tick, DWELL);
-  setInterval(() => { if (window.JV_backtest && window.JV_backtest.active() && Date.now() > holdUntil){ const b = SLIDES.findIndex(s => s.id === 'backtest'); if (idx !== b) go(b); } }, 2500);
-  setInterval(() => { const JV = window.JV || {}; if (window.JV_backtest && window.JV_backtest.active()) return; if ((JV.speaking || JV.mode === 'listening') && idx !== 0){ go(0); holdUntil = Date.now() + 6000; } }, 400);
+  setInterval(() => { const JV = window.JV || {}; if ((JV.speaking || JV.mode === 'listening') && idx !== 0){ go(0); holdUntil = Date.now() + 6000; } }, 400);
 })();
 
 </script>
