@@ -569,7 +569,7 @@ const FX = (() => {
   const speakMoney = n => '$' + Math.abs(Math.round(n)).toLocaleString();
   const tradeClean = t => RULES.every(k => t.rules && t.rules[k]);
   const dayClean = trades => trades.length <= 2 && trades.every(tradeClean);
-  let sb = null, uid = null, week = null, todos = [];
+  let sb = null, uid = null, week = null, todos = [], todoRefs = [];
   const RULE_SPOKEN = {plan:'a trade off your plan', size:'oversizing', noRevenge:'a revenge trade', noFomo:'a FOMO chase', window:'trading outside the nine thirty to ten thirty window'};
   const andList = a => a.length === 1 ? a[0] : a.slice(0, -1).join(', ') + ', and ' + a[a.length - 1];
   const DAY_SPOKEN = {MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday'};
@@ -584,8 +584,10 @@ const FX = (() => {
   // turn Cole's day docs into this week's numbers
   function compute(rows){
     const byKey = {}; (rows || []).forEach(r => { byKey[r.path.split('/').pop()] = r.data || {}; });
-    window.JV_coleDays = byKey; window.dispatchEvent(new Event('cole-update'));
-    todos = Object.keys(byKey).sort().reverse().flatMap(k => (byKey[k].tasks || []).filter(t => t && t.text && !t.done).map(t => String(t.text)));
+    window.JV_coleDays = byKey;
+    todoRefs = Object.keys(byKey).sort().reverse().flatMap(k => (byKey[k].tasks || []).map((t, i) => ({k, i, t})).filter(o => o.t && o.t.text && !o.t.done).map(o => ({key:o.k, i:o.i, text:String(o.t.text)})));
+    todos = todoRefs.map(o => o.text);
+    window.dispatchEvent(new Event('cole-update'));
     const today = keyOf(new Date());
     const days = weekKeys().map(w => {
       const trades = (byKey[w.key] && Array.isArray(byKey[w.key].trades)) ? byKey[w.key].trades : [];
@@ -680,6 +682,63 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     return !error;
   };
   window.JV_coleTodos = () => (uid || todos.length) ? todos.slice() : null;
+  // ---- Cole to-dos ARE Spikey's objectives: add / complete write straight into Cole ----
+  const BLANK = () => ({checkin:null,trades:[],meals:[],spend:[],gym:false,reel:false,family:false,lossAt:null,journal:[],ideas:[],tasks:[],sched:{},laptop:{},slips:{},slipLog:[]});
+  async function editDay(key, fn){
+    const path = 'days/' + key;
+    const {data:row, error:e1} = await sb.from('cole_docs').select('data').eq('path', path).maybeSingle();
+    if (e1) throw new Error("Couldn't reach Cole.");
+    const d = Object.assign(BLANK(), (row && row.data) || {});
+    if (!Array.isArray(d.tasks)) d.tasks = [];
+    fn(d);
+    const {error:e2} = await sb.from('cole_docs').upsert({user_id:uid, path, data:d, updated_at:new Date().toISOString()}, {onConflict:'user_id,path'});
+    if (e2) throw new Error("Couldn't save to Cole: " + e2.message);
+    await refresh();
+  }
+  window.JV_coleTasks = {
+    on: () => !!(sb && uid),
+    list: () => todos.slice(),
+    add: text => editDay(keyOf(new Date()), d => d.tasks.push({text:String(text), done:false, at:Date.now()})),
+    complete: async text => {
+      const ref = todoRefs.find(r => r.text === text); if (!ref) return false;
+      await editDay(ref.key, d => {
+        let i = ref.i;
+        if (!d.tasks[i] || d.tasks[i].text !== ref.text) i = d.tasks.findIndex(t => t && !t.done && t.text === ref.text);
+        if (i >= 0){ d.tasks[i].done = true; d.tasks[i].doneAt = Date.now(); }
+      });
+      return true;
+    },
+    completeAll: async () => {
+      const keys = [...new Set(todoRefs.map(r => r.key))];
+      for (const k of keys) await editDay(k, d => d.tasks.forEach(t => { if (t && !t.done){ t.done = true; t.doneAt = Date.now(); } }));
+    }
+  };
+  window.JV_coleGetDoc = async path => {
+    if (!sb || !uid) return null;
+    const {data} = await sb.from('cole_docs').select('data').eq('path', path).maybeSingle();
+    return data ? data.data : null;
+  };
+  // ---- read Cole's pages (journal, meals, trades, ideas, spending, to-dos) for any date range ----
+  window.JV_coleRead = (from, to, sections) => {
+    if (!uid) return null;
+    const days = window.JV_coleDays || {};
+    const want = (sections && sections.length) ? sections : ['journal','trades','meals','ideas','spend','tasks','habits'];
+    const out = {};
+    Object.keys(days).sort().filter(k => (!from || k >= from) && (!to || k <= to)).forEach(k => {
+      const d = days[k] || {}, o = {};
+      if (want.includes('journal')) o.journal = (d.journal || []).filter(j => j && !j.hidden && j.text).map(j => (j.tag ? '[' + j.tag + '] ' : '') + j.text);
+      if (want.includes('trades')) o.trades = (d.trades || []).map(t => ({pnl:t.pnl, sym:t.sym || t.symbol, side:t.side || t.dir, note:t.note || t.notes, rulesBroken:RULES.filter(r => !(t.rules && t.rules[r]))}));
+      if (want.includes('meals')) o.meals = (d.meals || []).map(m => `${m.name} (${m.kcal || 0} kcal, ${m.p || 0}g protein)`);
+      if (want.includes('ideas')) o.ideas = (d.ideas || []).map(x => (x.area ? '[' + x.area + '] ' : '') + x.text);
+      if (want.includes('spend')) o.spend = (d.spend || []).map(x => `${x.what} $${x.amt} (${x.cat})`);
+      if (want.includes('tasks')) o.todos = (d.tasks || []).filter(t => t && t.text).map(t => (t.done ? '[done] ' : '') + t.text);
+      if (want.includes('habits')) o.habits = {gym:!!d.gym, reel:!!d.reel, family:!!d.family};
+      if (d.checkin && want.includes('journal')) o.checkin = d.checkin;
+      Object.keys(o).forEach(x => { if (Array.isArray(o[x]) && !o[x].length) delete o[x]; });
+      if (Object.keys(o).length) out[k] = o;
+    });
+    return out;
+  };
   const signed = n => (n >= 0 ? 'up ' : 'down ') + speakMoney(n);
 
   // full spoken breakdown: P&L by day, which rules were broken, clean vs broken totals
@@ -772,6 +831,75 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
   };
   s.onerror = () => { state('COLE · OFFLINE'); readyResolve(); };
   document.head.appendChild(s);
+})();
+
+</script>
+<script>
+/* ===== Spikey learns: rules and voice shortcuts it picks up while running (shared with Cole) ===== */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  const LS = 'spikey.learned', DOC = 'spikey/learned';
+  const norm = t => String(t || '').toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const blank = () => ({rules: [], shortcuts: [], removed: []});
+  let L = (() => { try{ return Object.assign(blank(), JSON.parse(localStorage.getItem(LS) || '{}')); }catch{ return blank(); } })();
+
+  function save(){
+    try{ localStorage.setItem(LS, JSON.stringify(L)); }catch{}
+    if (window.JV_coleSaveDoc) window.JV_coleSaveDoc(DOC, L).catch(() => {});
+    window.dispatchEvent(new Event('spikey-learned'));
+  }
+  // merge what Cole has (learned on another device) with what this window has
+  async function sync(){
+    try{
+      await window.JV_coleReady;
+      const remote = window.JV_coleGetDoc && await window.JV_coleGetDoc(DOC);
+      if (!remote) { if (L.rules.length || L.shortcuts.length) save(); return; }
+      const removed = new Set([...(L.removed || []), ...(remote.removed || [])]);
+      const mergeBy = (a, b, key) => { const m = new Map(); [...a, ...b].forEach(x => { if (!x) return; const k = norm(x[key]); if (removed.has(k)) return; const o = m.get(k); if (!o || (x.at || 0) > (o.at || 0)) m.set(k, x); }); return [...m.values()]; };
+      L = {rules: mergeBy(L.rules, remote.rules || [], 'text'), shortcuts: mergeBy(L.shortcuts, remote.shortcuts || [], 'phrase'), removed: [...removed].slice(-200)};
+      save();
+    }catch{}
+  }
+  sync();
+  let synced = false; window.addEventListener('cole-update', () => { if (!synced && window.JV_coleSignedIn && window.JV_coleSignedIn()){ synced = true; sync(); } });
+
+  const api = {
+    list: () => JSON.parse(JSON.stringify({rules: L.rules, shortcuts: L.shortcuts})),
+    remember(text){
+      text = String(text || '').trim(); if (!text) return 'Nothing to learn.';
+      const k = norm(text);
+      L.removed = (L.removed || []).filter(r => r !== k);
+      L.rules = L.rules.filter(r => norm(r.text) !== k); L.rules.push({text, at: Date.now()});
+      if (L.rules.length > 60) L.rules.shift();
+      save(); return 'Learned: ' + text;
+    },
+    teach(phrase, command){
+      phrase = norm(phrase); command = String(command || '').trim();
+      if (!phrase || !command) return 'I need both the phrase and what to do.';
+      L.removed = (L.removed || []).filter(r => r !== phrase);
+      L.shortcuts = L.shortcuts.filter(s => norm(s.phrase) !== phrase); L.shortcuts.push({phrase, command, at: Date.now()});
+      save(); return `Got it. When you say "${phrase}", I will ${command}.`;
+    },
+    forget(query){
+      const q = norm(query); if (!q) return 'Forget what?';
+      const hit = x => { const t = norm(x); return t === q || t.includes(q) || q.includes(t); };
+      const gone = [...L.rules.filter(r => hit(r.text)).map(r => r.text), ...L.shortcuts.filter(s => hit(s.phrase) || hit(s.command)).map(s => s.phrase)];
+      if (!gone.length) return "I didn't find anything like that in what I've learned.";
+      L.rules = L.rules.filter(r => !hit(r.text)); L.shortcuts = L.shortcuts.filter(s => !(hit(s.phrase) || hit(s.command)));
+      L.removed = [...(L.removed || []), ...gone.map(norm)].slice(-200);
+      save(); return 'Forgot: ' + gone.join('; ');
+    },
+    removeAt(kind, i){ const arr = kind === 'rule' ? L.rules : L.shortcuts; const [x] = arr.splice(i, 1); if (x) L.removed = [...(L.removed || []), norm(x.text || x.phrase)].slice(-200); save(); },
+    // exact (or near-exact) shortcut phrase → the command to run instead
+    match(text){ const t = norm(text); const s = L.shortcuts.find(x => x.phrase === t || t === x.phrase.replace(/^(let'?s|lets) /, '')); return s ? s.command : null; },
+    prompt(){
+      if (!L.rules.length && !L.shortcuts.length) return '';
+      return '\nThings Nick has taught you (follow them; newer ones win over older ones):\n' +
+        L.rules.map(r => '- ' + r.text).join('\n') +
+        (L.shortcuts.length ? '\nHis voice shortcuts: ' + L.shortcuts.map(s => `"${s.phrase}" means: ${s.command}`).join('; ') : '');
+    }
+  };
+  window.JV_learn = api;
 })();
 
 </script>
@@ -972,7 +1100,10 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     {name:'complete_task', description:'Mark one of Spikey\'s objectives done, by its number (1 = first).', input_schema:{type:'object', properties:{number:{type:'integer'}}, required:['number']}},
     {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. Use when he says log, journal, note, tell Cole, or describes his trades, food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
     {name:'get_trading_week', description:'Nick\'s P&L this week from Cole, by day, with which trading rules he broke.', input_schema:{type:'object', properties:{}}},
-    {name:'get_todos', description:'Nick\'s open to-dos in Cole plus Spikey\'s objectives.', input_schema:{type:'object', properties:{}}}
+    {name:'get_todos', description:'Nick\'s open objectives (the same list as his Cole to-dos).', input_schema:{type:'object', properties:{}}},
+    {name:'read_cole', description:'Read Nick\'s Cole pages for a date range: journal entries (tagged trading, family, business, fitness), trades with rules broken, meals with macros, ideas, spending, to-dos and habits. Use for anything about what he wrote, ate, spent, planned or felt on a day or over a period.', input_schema:{type:'object', properties:{from:{type:'string', description:'YYYY-MM-DD'}, to:{type:'string', description:'YYYY-MM-DD'}, sections:{type:'array', items:{type:'string', enum:['journal','trades','meals','ideas','spend','tasks','habits']}}}, required:['from','to']}},
+    {name:'learn', description:'Permanently change how you behave. Use kind "rule" when Nick corrects you, states a preference, or says always / never / next time / from now on / remember that (store one short, clear instruction in your own words). Use kind "shortcut" when he defines a voice phrase that should trigger an action ("when I say game time, play my trading playlist and show the trading slide").', input_schema:{type:'object', properties:{kind:{type:'string', enum:['rule','shortcut']}, text:{type:'string', description:'the rule, for kind rule'}, phrase:{type:'string', description:'the trigger phrase, for kind shortcut'}, command:{type:'string', description:'what to do, written as a command Nick could say to you, for kind shortcut'}}, required:['kind']}},
+    {name:'forget_learned', description:'Remove a rule or shortcut you learned earlier, when Nick asks you to forget or stop doing it.', input_schema:{type:'object', properties:{query:{type:'string'}}, required:['query']}}
   ];
 
   const open = url => { const w = window.open(url, '_blank'); return w ? 'Opened.' : 'The window was blocked.'; };
@@ -1009,7 +1140,17 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
         case 'complete_task': return window.JV_tasks.complete(input.number);
         case 'log_to_cole': return (await window.JV_coleLog(input.text, askJSON)).message;
         case 'get_trading_week': return (window.JV_pnlBreakdown && window.JV_pnlBreakdown()) || 'Cole is not signed in on Spikey, so I cannot see trades.';
-        case 'get_todos': return JSON.stringify({cole:(window.JV_coleTodos && window.JV_coleTodos()) || 'Cole not signed in', spikey:window.JV_tasks.list()});
+        case 'get_todos': return JSON.stringify({objectives:window.JV_tasks.list(), cole_signed_in:!!(window.JV_coleSignedIn && window.JV_coleSignedIn())});
+        case 'read_cole': {
+          const r = window.JV_coleRead && window.JV_coleRead(input.from, input.to, input.sections);
+          if (!r) return 'Cole is not signed in on Spikey.';
+          const t = JSON.stringify(r); return t === '{}' ? 'Nothing logged in Cole for those dates.' : t.slice(0, 12000);
+        }
+        case 'learn': {
+          const Ln = window.JV_learn; if (!Ln) return 'Learning is not available.';
+          return input.kind === 'shortcut' ? Ln.teach(input.phrase, input.command) : Ln.remember(input.text);
+        }
+        case 'forget_learned': return window.JV_learn ? window.JV_learn.forget(input.query) : 'Learning is not available.';
       }
       return 'Unknown tool.';
     }catch(e){ return 'Failed. Tell Nick exactly this: ' + (e.message || e); }
@@ -1019,9 +1160,11 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     const now = new Date();
     return `You are Spikey, Nick's personal voice assistant, running on his laptop dashboard. Sledge B is his brand ("by outcasts for outcasts"). Nick is a Miami Mercedes-Benz technician who day trades MYM/YM futures with strict rules (max 2 trades a day, no revenge trades, no oversizing, no FOMO, trade only 9:30 to 10:30 ET) and runs Sledge B events and content.
 Your replies are SPOKEN ALOUD. Keep them to 1 to 3 short sentences, casual and direct, no markdown, no lists, no emojis, never read out URLs. Say numbers naturally.
+Cole is Nick's other app and part of the same personal assistant as you: his Cole to-dos are your objectives, and his Cole journal, meals, trades, ideas and spending are yours to read with read_cole. Today's date is ${(d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'))(now)}.
+You keep improving: whenever Nick corrects you, tells you how he wants something done, or says always, never, next time or from now on, call the learn tool so you remember it permanently, then confirm briefly.
 Use your tools to act: play music on Spotify, open YouTube, TradingView or websites, show charts, manage objectives, log things into Cole, and look up his trading week and to-dos. Use web_search for anything current (news, prices, scores, weather elsewhere, facts you are unsure of).
 Never give specific trade calls or financial advice. If he's clearly about to break a trading rule, remind him.
-${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is running right now: ' + window.JV_backtest.summary() + ' Short replies like "long win 2R" or "loss" are backtest trades to log.\n' : ''}Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', weekday:'long', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'})} Eastern time, and he is in Miami.`;
+${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is running right now: ' + window.JV_backtest.summary() + ' Short replies like "long win 2R" or "loss" are backtest trades to log.\n' : ''}${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', weekday:'long', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'})} Eastern time, and he is in Miami.`;
   }
 
   async function ask(text, opts){
@@ -1197,7 +1340,27 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     if (!tasks.length){ const li = document.createElement('li'); li.className='empty'; li.textContent='No open objectives'; ol.appendChild(li); return; }
     tasks.forEach((t,i) => { const li = document.createElement('li'); li.innerHTML = `<b>${pad(i+1)}</b><span>${esc(t)}</span>`; ol.appendChild(li); });
   }
-  const saveTasks = () => { store.set('tasks', tasks); renderTasks(); };
+  const saveTasks = () => { if (!coleOn()) store.set('tasks', tasks); renderTasks(); };
+  // Cole's to-do list IS the objectives list once Cole is signed in
+  const coleOn = () => !!(window.JV_coleTasks && window.JV_coleTasks.on());
+  let migrated = false;
+  window.addEventListener('cole-update', async () => {
+    if (!coleOn()) return;
+    const local = store.get('tasks', []);
+    if (!migrated && local.length){                    // move any old Spikey-only objectives into Cole once
+      migrated = true; store.set('tasks', []);
+      for (const t of local){ try{ await window.JV_coleTasks.add(t); }catch{} }
+      return;
+    }
+    migrated = true;
+    tasks = window.JV_coleTasks.list(); renderTasks();
+  });
+  function addObjective(t){
+    t = String(t).charAt(0).toUpperCase() + String(t).slice(1);
+    tasks.push(t); renderTasks();
+    if (coleOn()) window.JV_coleTasks.add(t).catch(e => say(e.message)); else saveTasks();
+    return t;
+  }
   renderTasks();
 
   // ---------- sound: short chime when it wakes ----------
@@ -1331,13 +1494,8 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   const listOut = arr => arr.length === 1 ? arr[0] : arr.slice(0, -1).join(', ') + ', and ' + arr[arr.length - 1];
   function todoSentences(){
     const out = [];
-    const cole = window.JV_coleTodos ? window.JV_coleTodos() : null;
-    if (cole){
-      if (cole.length) out.push(`On your Cole to-do list: ${listOut(cole.slice(0, 5))}${cole.length > 5 ? `, plus ${cole.length - 5} more` : ''}.`);
-      else out.push('Your Cole to-do list is clear.');
-    }
-    if (tasks.length) out.push(`Your objectives here: ${listOut(tasks.slice(0, 5))}${tasks.length > 5 ? `, plus ${tasks.length - 5} more` : ''}.`);
-    else if (!cole) out.push('No open objectives.');
+    if (tasks.length) out.push(`Your objectives: ${listOut(tasks.slice(0, 5))}${tasks.length > 5 ? `, plus ${tasks.length - 5} more` : ''}.`);
+    else out.push('No open objectives. Your list is clear.');
     return out;
   }
   // the opening announcement when Spikey launches: no weather, no pop-up box
@@ -1390,6 +1548,21 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
       if (/wake up|come online|i'?m back|online/.test(text)){ setMode('idle'); return briefing(`Welcome back, ${CONFIG.name}.`); }
       return;
     }
+    // --- things Spikey learned: voice shortcuts and teaching ---
+    if (window.JV_learn){
+      const Ln = window.JV_learn;
+      const sc = !(opts && opts.viaShortcut) && Ln.match(text);
+      if (sc) return handle(sc, {...(opts || {}), viaShortcut:true});
+      let lm = clean.match(/^when(?:ever)? i say\s+["“]?(.+?)["”]?\s+(?:you should|i want you to|then|just|do)\s+(.+)$/i);
+      if (lm && !brainOn && !/^(you|it)\b/i.test(lm[2])) return say(Ln.teach(lm[1], lm[2]));   // with the brain on, Claude splits phrase/action properly
+      if ((lm = text.match(/^(?:forget|unlearn|stop doing)(?: the| that)?(?: shortcut| rule)?\s+(.+)$/))) return say(Ln.forget(lm[1]));
+      if (/^(what have you learned|what did you learn|what do you know about me|show what you learned)$/.test(text)){
+        const x = Ln.list(); const n = x.rules.length + x.shortcuts.length;
+        if (!n) return say("Nothing yet. Correct me or tell me how you like things and I'll remember.");
+        holo('LEARNED', [...x.rules.map(r => row(esc(r.text), 'RULE')), ...x.shortcuts.map(c => row(esc('"' + c.phrase + '" → ' + c.command), 'SHORTCUT'))].join(''));
+        return say(`I've learned ${x.rules.length} rule${x.rules.length === 1 ? '' : 's'} and ${x.shortcuts.length} shortcut${x.shortcuts.length === 1 ? '' : 's'}. They're on screen.`);
+      }
+    }
     if (/^(go to sleep|stand ?by|sleep mode|power down|that'?s all)$/.test(text) || (!brainOn && /go to sleep|stand ?by|sleep mode|power down|that'?s all/.test(text))){ await say(`Standing by, ${CONFIG.address}.`); return setMode('sleep'); }
     if (/^(brief|briefing|status report|rundown|catch me up|good (morning|afternoon|evening))/.test(text) || (!brainOn && /brief|status report|rundown|catch me up/.test(text))) return briefing();
     if (/^(what('?s| is) the )?time( is it)?( now)?$|^what time is it( now)?$/.test(text) || (!brainOn && /\btime\b/.test(text))) return say(timeSentence());
@@ -1401,15 +1574,14 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     }
     let m;
     if ((m = clean.match(/^(?:add (?:a )?(?:task|objective|to ?do)(?: to)?|remind me to|new task)\s+(.+)/i))){
-      const t = m[1].charAt(0).toUpperCase() + m[1].slice(1);
-      tasks.push(t); saveTasks();
-      return say(`Added: ${t}.`);
+      const t = addObjective(m[1]);
+      return say(`Added: ${t}.${coleOn() ? ' It is on your Cole to-do list too.' : ''}`);
     }
     if ((m = text.match(/^(?:complete|finish|remove|delete|done with|check off)\s+(?:task|objective|number)?\s*(\d+|one|two|to|too|three|four|for|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth)$/))){
       const n = /\d/.test(m[1]) ? parseInt(m[1]) : numWords[m[1]];
       return say(completeTask(n));
     }
-    if (/^clear (all )?(my )?(tasks|objectives|list)$/.test(text)){ tasks = []; saveTasks(); return say('Objectives cleared.'); }
+    if (/^clear (all )?(my )?(tasks|objectives|list)$/.test(text)){ tasks = []; if (coleOn()) window.JV_coleTasks.completeAll().catch(e => say(e.message)); saveTasks(); return say('Objectives cleared.'); }
     if (/^(read |what('?s| is) on )?(my )?(tasks|objectives|to ?dos?|agenda|list)$|^what('?s| is) on my (list|agenda|to ?do list)$/.test(text) || (!brainOn && /(tasks|objectives|to ?do|agenda|my list)/.test(text))){
       if (tasks.length) holo('OBJECTIVES', tasks.map((t,i) => row(esc(t), pad(i+1))).join(''));
       return say(todoSentences().join(' '));
@@ -1436,7 +1608,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     if (window.JV_backtest){
       const B = window.JV_backtest;
       // anything like "open a backtesting screen", "can you start backtesting", "pull up my backtest"
-      if (/\bbacktest/.test(text) && /\b(open|start|pull|bring|launch|begin|let'?s|lets|time to|fire up|load|up)\b/.test(text) && !/\b(end|stop|finish|close|minimi[sz]e|hide|undo|wrap|how|log|win|loss|long|short)\b/.test(text)){
+      if (/\bbacktest/.test(text) && !/^when(ever)? i say/.test(text) && /\b(open|start|pull|bring|launch|begin|let'?s|lets|time to|fire up|load|up)\b/.test(text) && !/\b(end|stop|finish|close|minimi[sz]e|hide|undo|wrap|how|log|win|loss|long|short)\b/.test(text)){
         if (B.active()){ B.show(true); return say('Backtest screen is up.'); }
         return say(B.open().message);
       }
@@ -1498,12 +1670,13 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   }
   function completeTask(n){
     if (!tasks[n-1]) return `There's no objective number ${n}.`;
-    const [t] = tasks.splice(n-1, 1); saveTasks();
+    const [t] = tasks.splice(n-1, 1);
+    if (coleOn()) window.JV_coleTasks.complete(t).catch(e => say(e.message)); saveTasks();
     return `Marked complete: ${t}. ${tasks.length} remaining.`;
   }
   window.JV_tasks = {
     list: () => tasks.slice(),
-    add: t => { tasks.push(String(t).charAt(0).toUpperCase() + String(t).slice(1)); saveTasks(); },
+    add: t => { addObjective(t); },
     complete: n => completeTask(n)
   };
 
@@ -1655,7 +1828,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   const applySym = sym => { if (sym && sym !== lastSym && window.JV_setSymbol){ lastSym = sym; window.JV_setSymbol(sym); } };
   if (bus) bus.onmessage = e => { if (e.data && e.data.type === 'symbol') applySym(e.data.symbol); };
   window.addEventListener('storage', e => {
-    if (e.key === 'jarvis.tasks'){ tasks = store.get('tasks', []); renderTasks(); }
+    if (e.key === 'jarvis.tasks' && !coleOn()){ tasks = store.get('tasks', []); renderTasks(); }
     if (e.key === 'jarvis.symbol') applySym(store.get('symbol', null));
   });
   if (SIDE){
@@ -1957,6 +2130,8 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   #setupPanel button{padding:8px 12px;font:600 10.5px var(--f-mono);letter-spacing:.18em;border:1px solid var(--line);background:transparent;color:var(--txt);cursor:pointer}
   #setupPanel button.go{background:var(--a);border-color:var(--a);color:#fff}
   #setupPanel code{font:400 12px var(--f-mono);color:var(--a2);word-break:break-all}
+  #setupPanel .lrow{display:flex;gap:8px;align-items:center;justify-content:space-between;border:1px solid var(--line);padding:6px 8px;margin-bottom:6px;font-size:13px}
+  #setupPanel .lrow button{padding:3px 8px}
   #nowPlaying{display:none;gap:12px;align-items:center;background:rgba(255,255,255,.03);border-radius:12px;padding:10px}
   #nowPlaying img{width:64px;height:64px;border-radius:6px;object-fit:cover;flex:none;background:#222}
   #nowPlaying .np{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -1983,6 +2158,8 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
 
   function draw(){
     const brain = window.JV_brain, sp = window.JV_spotify;
+    const esc = t => String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
+    const learned = window.JV_learn ? window.JV_learn.list() : {rules:[], shortcuts:[]};
     const hasKey = brain && brain.hasKey(), spOn = sp && sp.connected(), coleOn = window.JV_coleSignedIn && window.JV_coleSignedIn();
     btn.classList.toggle('needs', !hasKey);
     panel.innerHTML = `
@@ -2008,7 +2185,14 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
         <h4>3 · Cole <em class="${coleOn ? 'ok' : ''}">${coleOn ? 'SIGNED IN ✓' : 'NOT SIGNED IN'}</em></h4>
         <p>${coleOn ? 'Spikey reads your trades and to-dos, and “log to Cole …” saves into the right sections.' : 'Sign in with your Cole email and password.'}</p>
         ${coleOn ? '' : '<div class="btns"><button class="go" id="coleGoSetup">SIGN IN TO COLE</button></div>'}
+      </section>
+      <section>
+        <h4>4 · What Spikey has learned <em>${learned.rules.length + learned.shortcuts.length}</em></h4>
+        <p>Correct Spikey or say “from now on …”, “next time …”, or “when I say X, do Y”. It remembers on every device through Cole.</p>
+        ${[...learned.rules.map((r, i) => `<div class="lrow"><span>${esc(r.text)}</span><button data-k="rule" data-i="${i}">✕</button></div>`),
+           ...learned.shortcuts.map((c, i) => `<div class="lrow"><span>“${esc(c.phrase)}” → ${esc(c.command)}</span><button data-k="shortcut" data-i="${i}">✕</button></div>`)].join('') || '<p style="color:var(--mute)">Nothing yet.</p>'}
       </section>`;
+    panel.querySelectorAll('.lrow button').forEach(b => b.onclick = () => { window.JV_learn.removeAt(b.dataset.k, +b.dataset.i); draw(); });
     $('setupClose').onclick = () => panel.classList.remove('show');
     $('saveKey').onclick = () => { const v = $('setKey').value.trim(); if (v){ brain.setKey(v); draw(); } };
     if ($('delKey')) $('delKey').onclick = () => { brain.setKey(''); draw(); };
@@ -2020,6 +2204,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
    // typing here isn't push-to-talk
   }
   btn.onclick = () => { draw(); panel.classList.add('show'); };
+  window.addEventListener('spikey-learned', () => { if (panel.classList.contains('show')) draw(); });
   setTimeout(draw, 1500);
   // first run: open setup automatically if the brain has no key
   setTimeout(() => { if (window.JV_brain && !window.JV_brain.hasKey()){ draw(); panel.classList.add('show'); } }, 9000);
