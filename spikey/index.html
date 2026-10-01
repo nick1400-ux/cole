@@ -1000,6 +1000,9 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
   async function device(opts = {}){
     let {devices} = await api('/me/player/devices');
     const pick = list => (preferName && list.find(x => x.name.toLowerCase().includes(preferName.toLowerCase()))) || list.find(isHome) || null;
+    if (opts.control){                                    // pause/skip/volume act on whatever is playing right now
+      const d0 = devices.find(x => x.is_active) || devices.find(isHome) || devices[0] || null; lastDevice = d0; return d0;
+    }
     let d = pick(devices);
     if (!d){
       location.href = 'spotify:';                         // open the Spotify desktop app, then wait for it to show up
@@ -1049,7 +1052,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
       return {ok:true, message:`Playing ${item.name}${who}${d.type === 'Computer' ? '' : ' on ' + d.name}.`, device:d.name};
     },
     async control(action, value){
-      const d = await device(); const q = d ? '?device_id=' + encodeURIComponent(d.id) : '';
+      const d = await device({control:true}); const q = d ? '?device_id=' + encodeURIComponent(d.id) : '';
       if (action === 'pause') await api('/me/player/pause' + q, {method:'PUT'});
       else if (action === 'resume' || action === 'play') await api('/me/player/play' + q, {method:'PUT'});
       else if (action === 'next') await api('/me/player/next' + q, {method:'POST'});
