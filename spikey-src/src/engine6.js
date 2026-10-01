@@ -417,7 +417,22 @@
       const n = /\d/.test(m[1]) ? parseInt(m[1]) : numWords[m[1]];
       return say(completeTask(n));
     }
-    if (/^clear (all )?(my )?(tasks|objectives|list)$/.test(text)){ tasks = []; if (coleOn()) window.JV_coleTasks.completeAll().catch(e => say(e.message)); saveTasks(); return say('Objectives cleared.'); }
+    // clear / complete objectives, however it's said ("clear it", "clear my objective", "remove that objective", "mark it done")
+    const OBJ = '(tasks?|objectives?|to ?dos?|to ?do list|objective list|list|agenda)';
+    if (new RegExp('^(clear|wipe|empty|reset|delete|remove|complete|finish|check off|mark( as)? done)( out)?( all| everything)?( of)?( my| the| that| this| those| these)? ?' + OBJ + '?( list)?( as done)?$').test(text) && !/^(complete|finish|delete|remove)$/.test(text) && (/\b(clear|wipe|empty|reset|all|everything)\b/.test(text) || tasks.length <= 1)){
+      if (!tasks.length && !coleOn()) return say('Your objectives are already clear.');
+      const n = tasks.length; tasks = []; renderTasks();
+      if (coleOn()){
+        try{ await window.JV_coleTasks.completeAll(); }catch(e){ return say(e.message); }
+        const left = window.JV_coleTasks.list();
+        if (left.length){ tasks = left; renderTasks(); return say(`Cole still shows ${left.length} open. I'll keep it on the list.`); }
+      } else saveTasks();
+      return say(n === 1 ? 'Done. That objective is cleared.' : n ? `Cleared all ${n} objectives.` : 'Objectives are clear.');
+    }
+    if (/^(refresh|reload|update|sync)( the| my)? (objectives?|objective list|tasks|to ?dos?|list)$/.test(text)){
+      if (coleOn()){ await window.JV_coleTasks.refresh(); tasks = window.JV_coleTasks.list(); renderTasks(); }
+      return say(tasks.length ? `${tasks.length} open objective${tasks.length === 1 ? '' : 's'}.` : 'No open objectives.');
+    }
     if (/^(read |what('?s| is) on )?(my )?(tasks|objectives|to ?dos?|agenda|list)$|^what('?s| is) on my (list|agenda|to ?do list)$/.test(text) || (!brainOn && /(tasks|objectives|to ?do|agenda|my list)/.test(text))){
       if (tasks.length) holo('OBJECTIVES', tasks.map((t,i) => row(esc(t), pad(i+1))).join(''));
       return say(todoSentences().join(' '));

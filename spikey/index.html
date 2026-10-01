@@ -765,20 +765,31 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     on: () => !!(sb && uid),
     list: () => todos.slice(),
     add: text => editDay(keyOf(new Date()), d => d.tasks.push({text:String(text), done:false, at:Date.now()})),
-    complete: async text => {
-      const ref = todoRefs.find(r => r.text === text); if (!ref) return false;
-      await editDay(ref.key, d => {
-        let i = ref.i;
-        if (!d.tasks[i] || d.tasks[i].text !== ref.text) i = d.tasks.findIndex(t => t && !t.done && t.text === ref.text);
-        if (i >= 0){ d.tasks[i].done = true; d.tasks[i].doneAt = Date.now(); }
-      });
-      return true;
-    },
-    completeAll: async () => {
-      const keys = [...new Set(todoRefs.map(r => r.key))];
-      for (const k of keys) await editDay(k, d => d.tasks.forEach(t => { if (t && !t.done){ t.done = true; t.doneAt = Date.now(); } }));
-    }
+    // complete by text (or everything) across EVERY day in Cole, read fresh from the server, then verify
+    complete: async text => (await closeTasks(t => same(t.text, text))) > 0,
+    completeAll: async () => closeTasks(() => true),
+    refresh: () => refresh()
   };
+  const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const same = (a, b) => { const x = norm(a), y = norm(b); return !!x && !!y && (x === y || x.startsWith(y) || y.startsWith(x)); };
+  const isOpen = t => t && t.text && !(t.done === true || t.done === 'true' || t.done === 1);
+  async function closeTasks(match){
+    if (!sb || !uid) throw new Error('Cole is still connecting.');
+    const {data, error} = await sb.from('cole_docs').select('path,data').like('path', 'days/%');
+    if (error) throw new Error("Couldn't reach Cole.");
+    let n = 0;
+    for (const row of data || []){
+      const d = row.data || {}; if (!Array.isArray(d.tasks)) continue;
+      let changed = false;
+      d.tasks.forEach(t => { if (isOpen(t) && match(t)){ t.done = true; t.doneAt = Date.now(); changed = true; n++; } });
+      if (changed){
+        const {error:e2} = await sb.from('cole_docs').upsert({user_id:uid, path:row.path, data:d, updated_at:new Date().toISOString()}, {onConflict:'user_id,path'});
+        if (e2) throw new Error("Couldn't save to Cole: " + e2.message);
+      }
+    }
+    await refresh();
+    return n;
+  }
   window.JV_coleGetDoc = async path => {
     if (!sb || !uid) return null;
     const {data} = await sb.from('cole_docs').select('data').eq('path', path).maybeSingle();
@@ -1253,7 +1264,7 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     {name:'status_report', description:'System status: brain, Cole, Spotify device, microphone, battery, network, backtest session, timers, focus mode.', input_schema:{type:'object', properties:{}}},
     {name:'economic_news', description:'Today\'s high-impact USD economic events with Eastern times (CPI, NFP, FOMC...).', input_schema:{type:'object', properties:{}}},
     {name:'add_task', description:'Add an objective to Spikey\'s on-screen list.', input_schema:{type:'object', properties:{text:{type:'string'}}, required:['text']}},
-    {name:'complete_task', description:'Mark one of Spikey\'s objectives done, by its number (1 = first).', input_schema:{type:'object', properties:{number:{type:'integer'}}, required:['number']}},
+    {name:'complete_task', description:'Mark one of Spikey\'s objectives done (it is also a Cole to-do), by its number on screen (1 = first), or number 0 with all=true to clear every objective. Always call get_todos first; never claim the list is empty without checking.', input_schema:{type:'object', properties:{number:{type:'integer'}, all:{type:'boolean'}}, required:['number']}},
     {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. ALWAYS use it when he talks about a real trade he took today (entered, got long/short, stopped out, closed it, took profit, the result): it is logged as a real trade in the shared Cole/Spikey trade log with his rules checked, and later details about the same trade update it instead of duplicating. Not for backtest/replay trades (use backtest). Also use when he says log, journal, note, tell Cole, or describes his food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
     {name:'get_trading_week', description:'Nick\'s P&L this week from Cole, by day, with which trading rules he broke.', input_schema:{type:'object', properties:{}}},
     {name:'get_todos', description:'Nick\'s open objectives (the same list as his Cole to-dos).', input_schema:{type:'object', properties:{}}},
@@ -1326,7 +1337,9 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
         case 'status_report': return window.JV_assist ? await window.JV_assist.status() : 'Not available.';
         case 'economic_news': { const n = window.JV_assist && await window.JV_assist.loadNews(true); return n ? JSON.stringify(n.events) : 'Could not check the calendar.'; }
         case 'add_task': window.JV_tasks.add(input.text); return 'Added.';
-        case 'complete_task': return window.JV_tasks.complete(input.number);
+        case 'complete_task':
+          if (input.all){ if (window.JV_coleTasks && window.JV_coleTasks.on()){ await window.JV_coleTasks.completeAll(); } window.JV_tasks.list().forEach(() => window.JV_tasks.complete(1)); return 'Cleared. Open now: ' + JSON.stringify(window.JV_tasks.list()); }
+          return window.JV_tasks.complete(input.number);
         case 'log_to_cole': return (await window.JV_coleLog(input.text, askJSON)).message;
         case 'get_trading_week': return (window.JV_pnlBreakdown && window.JV_pnlBreakdown()) || 'Cole data is still loading; try again shortly. Do not ask Nick to open or sign in to anything.';
         case 'get_todos': return JSON.stringify({objectives:window.JV_tasks.list(), cole_signed_in:!!(window.JV_coleSignedIn && window.JV_coleSignedIn())});
@@ -1819,7 +1832,22 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
       const n = /\d/.test(m[1]) ? parseInt(m[1]) : numWords[m[1]];
       return say(completeTask(n));
     }
-    if (/^clear (all )?(my )?(tasks|objectives|list)$/.test(text)){ tasks = []; if (coleOn()) window.JV_coleTasks.completeAll().catch(e => say(e.message)); saveTasks(); return say('Objectives cleared.'); }
+    // clear / complete objectives, however it's said ("clear it", "clear my objective", "remove that objective", "mark it done")
+    const OBJ = '(tasks?|objectives?|to ?dos?|to ?do list|objective list|list|agenda)';
+    if (new RegExp('^(clear|wipe|empty|reset|delete|remove|complete|finish|check off|mark( as)? done)( out)?( all| everything)?( of)?( my| the| that| this| those| these)? ?' + OBJ + '?( list)?( as done)?$').test(text) && !/^(complete|finish|delete|remove)$/.test(text) && (/\b(clear|wipe|empty|reset|all|everything)\b/.test(text) || tasks.length <= 1)){
+      if (!tasks.length && !coleOn()) return say('Your objectives are already clear.');
+      const n = tasks.length; tasks = []; renderTasks();
+      if (coleOn()){
+        try{ await window.JV_coleTasks.completeAll(); }catch(e){ return say(e.message); }
+        const left = window.JV_coleTasks.list();
+        if (left.length){ tasks = left; renderTasks(); return say(`Cole still shows ${left.length} open. I'll keep it on the list.`); }
+      } else saveTasks();
+      return say(n === 1 ? 'Done. That objective is cleared.' : n ? `Cleared all ${n} objectives.` : 'Objectives are clear.');
+    }
+    if (/^(refresh|reload|update|sync)( the| my)? (objectives?|objective list|tasks|to ?dos?|list)$/.test(text)){
+      if (coleOn()){ await window.JV_coleTasks.refresh(); tasks = window.JV_coleTasks.list(); renderTasks(); }
+      return say(tasks.length ? `${tasks.length} open objective${tasks.length === 1 ? '' : 's'}.` : 'No open objectives.');
+    }
     if (/^(read |what('?s| is) on )?(my )?(tasks|objectives|to ?dos?|agenda|list)$|^what('?s| is) on my (list|agenda|to ?do list)$/.test(text) || (!brainOn && /(tasks|objectives|to ?do|agenda|my list)/.test(text))){
       if (tasks.length) holo('OBJECTIVES', tasks.map((t,i) => row(esc(t), pad(i+1))).join(''));
       return say(todoSentences().join(' '));

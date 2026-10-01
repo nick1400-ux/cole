@@ -154,20 +154,31 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     on: () => !!(sb && uid),
     list: () => todos.slice(),
     add: text => editDay(keyOf(new Date()), d => d.tasks.push({text:String(text), done:false, at:Date.now()})),
-    complete: async text => {
-      const ref = todoRefs.find(r => r.text === text); if (!ref) return false;
-      await editDay(ref.key, d => {
-        let i = ref.i;
-        if (!d.tasks[i] || d.tasks[i].text !== ref.text) i = d.tasks.findIndex(t => t && !t.done && t.text === ref.text);
-        if (i >= 0){ d.tasks[i].done = true; d.tasks[i].doneAt = Date.now(); }
-      });
-      return true;
-    },
-    completeAll: async () => {
-      const keys = [...new Set(todoRefs.map(r => r.key))];
-      for (const k of keys) await editDay(k, d => d.tasks.forEach(t => { if (t && !t.done){ t.done = true; t.doneAt = Date.now(); } }));
-    }
+    // complete by text (or everything) across EVERY day in Cole, read fresh from the server, then verify
+    complete: async text => (await closeTasks(t => same(t.text, text))) > 0,
+    completeAll: async () => closeTasks(() => true),
+    refresh: () => refresh()
   };
+  const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const same = (a, b) => { const x = norm(a), y = norm(b); return !!x && !!y && (x === y || x.startsWith(y) || y.startsWith(x)); };
+  const isOpen = t => t && t.text && !(t.done === true || t.done === 'true' || t.done === 1);
+  async function closeTasks(match){
+    if (!sb || !uid) throw new Error('Cole is still connecting.');
+    const {data, error} = await sb.from('cole_docs').select('path,data').like('path', 'days/%');
+    if (error) throw new Error("Couldn't reach Cole.");
+    let n = 0;
+    for (const row of data || []){
+      const d = row.data || {}; if (!Array.isArray(d.tasks)) continue;
+      let changed = false;
+      d.tasks.forEach(t => { if (isOpen(t) && match(t)){ t.done = true; t.doneAt = Date.now(); changed = true; n++; } });
+      if (changed){
+        const {error:e2} = await sb.from('cole_docs').upsert({user_id:uid, path:row.path, data:d, updated_at:new Date().toISOString()}, {onConflict:'user_id,path'});
+        if (e2) throw new Error("Couldn't save to Cole: " + e2.message);
+      }
+    }
+    await refresh();
+    return n;
+  }
   window.JV_coleGetDoc = async path => {
     if (!sb || !uid) return null;
     const {data} = await sb.from('cole_docs').select('data').eq('path', path).maybeSingle();

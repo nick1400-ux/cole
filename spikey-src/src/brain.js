@@ -57,7 +57,7 @@
     {name:'status_report', description:'System status: brain, Cole, Spotify device, microphone, battery, network, backtest session, timers, focus mode.', input_schema:{type:'object', properties:{}}},
     {name:'economic_news', description:'Today\'s high-impact USD economic events with Eastern times (CPI, NFP, FOMC...).', input_schema:{type:'object', properties:{}}},
     {name:'add_task', description:'Add an objective to Spikey\'s on-screen list.', input_schema:{type:'object', properties:{text:{type:'string'}}, required:['text']}},
-    {name:'complete_task', description:'Mark one of Spikey\'s objectives done, by its number (1 = first).', input_schema:{type:'object', properties:{number:{type:'integer'}}, required:['number']}},
+    {name:'complete_task', description:'Mark one of Spikey\'s objectives done (it is also a Cole to-do), by its number on screen (1 = first), or number 0 with all=true to clear every objective. Always call get_todos first; never claim the list is empty without checking.', input_schema:{type:'object', properties:{number:{type:'integer'}, all:{type:'boolean'}}, required:['number']}},
     {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. ALWAYS use it when he talks about a real trade he took today (entered, got long/short, stopped out, closed it, took profit, the result): it is logged as a real trade in the shared Cole/Spikey trade log with his rules checked, and later details about the same trade update it instead of duplicating. Not for backtest/replay trades (use backtest). Also use when he says log, journal, note, tell Cole, or describes his food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
     {name:'get_trading_week', description:'Nick\'s P&L this week from Cole, by day, with which trading rules he broke.', input_schema:{type:'object', properties:{}}},
     {name:'get_todos', description:'Nick\'s open objectives (the same list as his Cole to-dos).', input_schema:{type:'object', properties:{}}},
@@ -130,7 +130,9 @@
         case 'status_report': return window.JV_assist ? await window.JV_assist.status() : 'Not available.';
         case 'economic_news': { const n = window.JV_assist && await window.JV_assist.loadNews(true); return n ? JSON.stringify(n.events) : 'Could not check the calendar.'; }
         case 'add_task': window.JV_tasks.add(input.text); return 'Added.';
-        case 'complete_task': return window.JV_tasks.complete(input.number);
+        case 'complete_task':
+          if (input.all){ if (window.JV_coleTasks && window.JV_coleTasks.on()){ await window.JV_coleTasks.completeAll(); } window.JV_tasks.list().forEach(() => window.JV_tasks.complete(1)); return 'Cleared. Open now: ' + JSON.stringify(window.JV_tasks.list()); }
+          return window.JV_tasks.complete(input.number);
         case 'log_to_cole': return (await window.JV_coleLog(input.text, askJSON)).message;
         case 'get_trading_week': return (window.JV_pnlBreakdown && window.JV_pnlBreakdown()) || 'Cole data is still loading; try again shortly. Do not ask Nick to open or sign in to anything.';
         case 'get_todos': return JSON.stringify({objectives:window.JV_tasks.list(), cole_signed_in:!!(window.JV_coleSignedIn && window.JV_coleSignedIn())});
