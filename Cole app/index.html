@@ -735,12 +735,66 @@ function pipelineCard(){
     ${posted.length?`<div class="muted">Recently posted: ${posted.map(r=>esc(r.title)).join(" · ")}</div>`:""}
   </div>`;
 }
+/* ===== Shared trade detector (same code lives in Cole app/index.html and Spikey's cole.js) =====
+   Pulls REAL trades Nick says he took out of a brain-dump / voice note and writes them into
+   today's Cole page (days/<date>.trades) — the same trade log Cole's Trade tab uses. */
+const COLE_TRADES = (() => {
+  const KEYS = ['plan','size','noRevenge','noFomo','window'];
+  const PER_PT = {YM:5, MYM:0.5};
+  const num = v => (v === null || v === undefined || v === '' || isNaN(+v)) ? '' : +v;
+  const summary = (t, i) => `#${i}: ${t.dir || '?'} ${t.qty || 1} ${t.contract || '?'}, result ${t.pnl !== '' && t.pnl !== undefined ? '$' + t.pnl : 'not logged yet'}${t.note ? ', "' + String(t.note).slice(0, 60) + '"' : ''}`;
+  // extra JSON field + rules appended to the sort prompt
+  function prompt(existing, plan){
+    const now = new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/New_York'});
+    const list = (existing || []).map(summary).join('; ') || 'none';
+    return {
+      schema: `"trades":[{"existing":int|null,"contract":"MYM|YM","dir":"LONG|SHORT","qty":int,"pnl":number|null,"r":number|null,"note":string,"rules":{"plan":bool,"size":bool,"noRevenge":bool,"noFomo":bool,"window":bool}}]`,
+      rules: `trades: ONLY real trades he says he actually entered today on his live or funded account ("took a short", "got long 2 MYM", "entered at 42,100", "stopped out", "closed it for 40 points"). NOT backtests, replay or sim, NOT setups he watched, planned, wanted or almost took, NOT trades from other days. Trades already logged today: ${list}. If he's adding to one of those (closing it, its result, how it went), set existing to its # and fill only what he said; otherwise existing null. Never log the same trade twice. contract: MYM or YM as said, else MYM. dir from long/short/buy/sell. qty: contracts, default 1. pnl: dollar result (negative for a loss) if he says it; if he gives points, pnl = points x qty x $5 for YM or $0.50 for MYM; null if unknown or still open. r: R multiple if he says it, else null. note: why he took it / what he felt, in his words. rules: true unless what he said shows it was broken: plan false if off his plan or impulsive (his plan today: ${plan ? '"' + String(plan).slice(0, 200) + '"' : 'none written'}); size false if more contracts than planned or he says oversized; noRevenge false if he was trying to win back a loss; noFomo false if chasing; window false if entered outside 9:30-10:30 ET (use the entry time he says, else now: ${now} ET). The trade itself goes in trades; only his mindset about it also goes in journal.`
+    };
+  }
+  // validate the model's trades
+  function clean(arr, existing){
+    const n = (existing || []).length;
+    return (Array.isArray(arr) ? arr : []).filter(t => t && typeof t === 'object').map(t => {
+      const ex = Number.isInteger(+t.existing) && t.existing !== null && t.existing !== '' && +t.existing >= 0 && +t.existing < n ? +t.existing : null;
+      const contract = String(t.contract || '').toUpperCase() === 'YM' ? 'YM' : 'MYM';
+      const d = String(t.dir || '').toUpperCase();
+      const dir = /SHORT|SELL/.test(d) ? 'SHORT' : /LONG|BUY/.test(d) ? 'LONG' : '';
+      const rules = {}; KEYS.forEach(k => rules[k] = !(t.rules && t.rules[k] === false));
+      return {existing:ex, contract, dir, qty:Math.max(1, Math.round(+t.qty || 1)), pnl:num(t.pnl), r:num(t.r), note:String(t.note || '').slice(0, 300), rules};
+    }).filter(t => t.existing !== null || t.dir);   // a new trade needs a direction
+  }
+  // write into a Cole day doc
+  function apply(d, list, at, via){
+    if (!Array.isArray(d.trades)) d.trades = [];
+    const done = [];
+    list.forEach(t => {
+      let tr;
+      if (t.existing !== null && d.trades[t.existing]){
+        tr = d.trades[t.existing];
+        if (t.pnl !== '') tr.pnl = t.pnl;
+        if (t.r !== '') tr.r = t.r;
+        if (t.note) tr.note = tr.note ? tr.note + ' · ' + t.note : t.note;
+        tr.rules = tr.rules || {}; KEYS.forEach(k => tr.rules[k] = tr.rules[k] !== false && t.rules[k]);
+        done.push({...tr, updated:true});
+      } else {
+        tr = {contract:t.contract, dir:t.dir, qty:t.qty, pnl:t.pnl, r:t.r, note:t.note, rules:t.rules, at, via};
+        d.trades.push(tr); done.push(tr);
+      }
+      if ((+tr.pnl || 0) < 0 || (+tr.r || 0) < 0) d.lossAt = at;
+    });
+    return done;
+  }
+  const broken = t => KEYS.filter(k => !(t.rules && t.rules[k]));
+  return {KEYS, prompt, clean, apply, broken, summary};
+})();
 const SECTORS={trading:"Trading mindset",journal:"Journal",family:"Family",business:"Business & content",fitness:"Fitness"};
 function vDump(){
   const r=ui.dump;
   const res = r ? `
     <div class="eyebrow">Here's how Cole sorted it</div>
     <div class="card gap">
+      ${(r.trades||[]).map((t,i)=>{const ex=t.existing!==null?day().trades[t.existing]:null,b=COLE_TRADES.broken(t);return `<label class="rule"><input type="checkbox" data-keep="trades:${i}" checked><span><span class="pill ${b.length?"bad":"good"}">${ex?"Update trade":"Trade"}</span> <strong>${ex?`${ex.dir} ${ex.qty} ${ex.contract}`:`${t.dir} ${t.qty} ${t.contract}`}</strong> <span class="mono muted">${t.pnl!==""?money(+t.pnl):"result not in yet"}${t.r!==""?` · ${t.r}R`:""}</span>${b.length?` <span class="muted">· broke: ${b.map(k=>(RULES.find(x=>x[0]===k)||[k,k])[1]).join("; ")}</span>`:""}${t.note?`<div class="muted">${esc(t.note)}</div>`:""}</span></label>`}).join("")}
       ${r.journal.map((j,i)=>`<label class="rule"><input type="checkbox" data-keep="journal:${i}" checked><span><span class="pill">${SECTORS[j.tag]||"Journal"}</span> ${esc(j.text)}</span></label>`).join("")}
       ${r.meals.map((m,i)=>`<label class="rule"><input type="checkbox" data-keep="meals:${i}" checked><span><span class="pill good">Fuel</span> ${esc(m.name)} <span class="mono muted">${m.kcal} kcal · ${m.p}P ${m.c}C ${m.f}F${m.cost?` · ${money(m.cost)}`:""}</span></span></label>`).join("")}
       ${r.ideas.map((x,i)=>`<label class="rule"><input type="checkbox" data-keep="ideas:${i}" checked><span><span class="pill warn">Idea</span> ${esc(x.text)}</span></label>`).join("")}
@@ -789,6 +843,7 @@ async function sortDump(){
   if(!sample){ui.dumpErr="Cole needs your Claude key to sort this into trades, food, ideas and to-dos. Paste it in the box below, then tap Sort it again.";return render()}
   ui.dumpBusy=true;ui.dumpErr="";ui.dumpRaw=txt;render();
   try{
+    const d0=day(),tb=COLE_TRADES.prompt(d0.trades,d0.checkin&&d0.checkin.plan);
     const out=await sample.json(`You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades YM/MYM futures (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
 Split this voice brain-dump into sectors. Keep his own words, lightly cleaned up; never invent facts.
 Brain-dump: """${txt}"""
@@ -800,8 +855,9 @@ Return JSON only:
  "spend":[{"what":string,"amt":number,"cat":"Food|Gas|Trading|Business|Other"}],
  "flags":["gym"|"reel"|"family"],
  "slips":[{"habit":string,"count":int,"trigger":string}],
+ ${tb.schema},
  "coach":string}
-Rules: trade mindset, emotions and trade recaps go in journal with tag "trading". Food eaten goes in meals with estimated macros (typical chain values if named); if a price was said for food put it in that meal's cost, NOT in spend. Non-food purchases go in spend. flags only for things he says he already did today (worked out, posted a reel, spent time with my brothers & sister). coach: one or two direct sentences reacting to anything important (a broken trading rule, a win, low mood), or "" if nothing stands out. slips: only when he says he slipped on one of these habits today (use the exact habit name): ${habits.list.map(h=>h.name).join("; ")}. trigger is what set it off in a word or two, or "". Empty arrays when nothing fits.`,{modelTier:"default"});
+Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". Food eaten goes in meals with estimated macros (typical chain values if named); if a price was said for food put it in that meal's cost, NOT in spend. Non-food purchases go in spend. flags only for things he says he already did today (worked out, posted a reel, spent time with my brothers & sister). coach: one or two direct sentences reacting to anything important (a broken trading rule, a win, low mood), or "" if nothing stands out. slips: only when he says he slipped on one of these habits today (use the exact habit name): ${habits.list.map(h=>h.name).join("; ")}. trigger is what set it off in a word or two, or "". Empty arrays when nothing fits.`,{modelTier:"default"});
     const A=v=>Array.isArray(v)?v:[];
     ui.dump={journal:A(out.journal).filter(j=>j&&j.text).map(j=>({tag:SECTORS[j.tag]?j.tag:"journal",text:String(j.text)})),
       meals:A(out.meals).filter(m=>m&&m.name).map(m=>({name:String(m.name).slice(0,80),kcal:Math.round(+m.kcal||0),p:Math.round(+m.p||0),c:Math.round(+m.c||0),f:Math.round(+m.f||0),cost:+m.cost||0})),
@@ -810,6 +866,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
       spend:A(out.spend).filter(x=>x&&+x.amt).map(x=>({what:String(x.what||""),amt:+x.amt,cat:String(x.cat||"Other")})),
       flags:A(out.flags).filter(f=>["gym","reel","family"].includes(f)),
       slips:A(out.slips).map(x=>({h:habits.list.find(h=>h.name.toLowerCase()===String(x.habit||"").toLowerCase()),count:Math.max(1,Math.round(+x.count||1)),trigger:String(x.trigger||"")})).filter(x=>x.h).map(x=>({id:x.h.id,name:x.h.name,count:x.count,trigger:x.trigger})),
+      trades:COLE_TRADES.clean(out.trades,d0.trades),
       coach:String(out.coach||"")};
   }catch(e){ui.dumpErr=aiErr(e,"Couldn't sort that one. Try again.")}
   ui.dumpBusy=false;render();
@@ -823,9 +880,11 @@ function saveDump(){
   r.tasks.forEach((x,i)=>keep("tasks:"+i)&&d.tasks.push({...x,at}));
   r.spend.forEach((x,i)=>keep("spend:"+i)&&d.spend.push({...x,at}));
   r.flags.forEach(f=>d[f]=true);
+  const keptTrades=(r.trades||[]).filter((x,i)=>keep("trades:"+i));
+  COLE_TRADES.apply(d,keptTrades,at,"cole");
   (r.slips||[]).forEach((x,i)=>{if(!keep("slips:"+i))return;d.slips[x.id]=(d.slips[x.id]||0)+x.count;for(let j=0;j<x.count;j++)d.slipLog.push({id:x.id,at,trigger:x.trigger})});
   if(ui.dumpRaw) d.journal.push({tag:"raw",text:ui.dumpRaw,at,hidden:true});
-  ui.dump=null;ui.dumpRaw="";save();tab="mind";window.scrollTo(0,0);render();
+  ui.dump=null;ui.dumpRaw="";save();tab=keptTrades.length?"trade":"mind";window.scrollTo(0,0);render();
 }
 const VIEWS={today:vToday,trade:vTrade,fuel:vFuel,plan:vPlan,mind:vMind,dump:vDump,review:vReview};
 function render(){

@@ -69,7 +69,7 @@
   }
   window.JV_renderPnl = rows => render(compute(rows));      // also used by tests
   // ---- write to Cole: sort what Nick said (same rules as Cole) and save it into today's page ----
-  const SORT_PROMPT = txt => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades YM/MYM futures (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
+  const SORT_PROMPT = (txt, tb) => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades YM/MYM futures (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
 Split this voice brain-dump into sectors. Keep his own words, lightly cleaned up; never invent facts.
 Brain-dump: """${txt}"""
 Return JSON only:
@@ -78,12 +78,18 @@ Return JSON only:
  "ideas":[{"area":"content|events|business|other","text":string}],
  "tasks":[{"text":string}],
  "spend":[{"what":string,"amt":number,"cat":"Food|Gas|Trading|Business|Other"}],
- "flags":["gym"|"reel"|"family"]}
-Rules: trade mindset, emotions and trade recaps go in journal with tag "trading". Food eaten goes in meals with estimated macros (typical chain values if named); if a price was said for food put it in that meal's cost, NOT in spend. Non-food purchases go in spend. flags only for things he says he already did today (worked out, posted a reel, spent time with my brothers & sister). Empty arrays when nothing fits.`;
+ "flags":["gym"|"reel"|"family"],
+ ${tb.schema}}
+Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". Food eaten goes in meals with estimated macros (typical chain values if named); if a price was said for food put it in that meal's cost, NOT in spend. Non-food purchases go in spend. flags only for things he says he already did today (worked out, posted a reel, spent time with my brothers & sister). Empty arrays when nothing fits.`;
   window.JV_coleLog = async (txt, askJSON) => {
     if (!sb || !uid) return {ok:false, message:"Cole is still connecting. Say it again in a few seconds and I will save it."};
     const A = v => Array.isArray(v) ? v : [];
-    const out = await askJSON(SORT_PROMPT(txt));
+    const path = 'days/' + keyOf(new Date());
+    const {data:row, error:e1} = await sb.from('cole_docs').select('data').eq('path', path).maybeSingle();
+    if (e1) return {ok:false, message:"Couldn't reach Cole right now."};
+    const cur = (row && row.data) || {};
+    const curTrades = Array.isArray(cur.trades) ? cur.trades : [];
+    const out = await askJSON(SORT_PROMPT(txt, COLE_TRADES.prompt(curTrades, cur.checkin && cur.checkin.plan)));
     const TAGS = ['trading','journal','family','business','fitness'];
     const r = {
       journal: A(out.journal).filter(j => j && j.text).map(j => ({tag: TAGS.includes(j.tag) ? j.tag : 'journal', text:String(j.text)})),
@@ -91,11 +97,9 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
       ideas: A(out.ideas).filter(x => x && x.text).map(x => ({area:String(x.area||'other'), text:String(x.text)})),
       tasks: A(out.tasks).filter(x => x && x.text).map(x => ({text:String(x.text), done:false})),
       spend: A(out.spend).filter(x => x && +x.amt).map(x => ({what:String(x.what||''), amt:+x.amt, cat:String(x.cat||'Other')})),
-      flags: A(out.flags).filter(f => ['gym','reel','family'].includes(f))
+      flags: A(out.flags).filter(f => ['gym','reel','family'].includes(f)),
+      trades: COLE_TRADES.clean(out.trades, curTrades)
     };
-    const path = 'days/' + keyOf(new Date());
-    const {data:row, error:e1} = await sb.from('cole_docs').select('data').eq('path', path).maybeSingle();
-    if (e1) return {ok:false, message:"Couldn't reach Cole right now."};
     const blank = {checkin:null,trades:[],meals:[],spend:[],gym:false,reel:false,family:false,lossAt:null,journal:[],ideas:[],tasks:[],sched:{},laptop:{},slips:{},slipLog:[]};
     const d = Object.assign(blank, (row && row.data) || {});
     ['journal','meals','ideas','tasks','spend'].forEach(k => { if (!Array.isArray(d[k])) d[k] = []; });
@@ -106,17 +110,25 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     r.tasks.forEach(x => d.tasks.push({...x, at}));
     r.spend.forEach(x => d.spend.push({...x, at}));
     r.flags.forEach(f => d[f] = true);
+    const logged = COLE_TRADES.apply(d, r.trades, at, 'spikey');
     d.journal.push({tag:'raw', text:txt, at, hidden:true});
     const {error:e2} = await sb.from('cole_docs').upsert({user_id:uid, path, data:d, updated_at:new Date().toISOString()}, {onConflict:'user_id,path'});
     if (e2) return {ok:false, message:"Couldn't save to Cole: " + e2.message};
     refresh();
     const parts = [];
+    const tradeSay = t => {
+      const res = t.pnl !== '' && t.pnl !== undefined ? (+t.pnl >= 0 ? 'up ' : 'down ') + speakMoney(+t.pnl) : 'result not in yet';
+      const br = COLE_TRADES.broken(t).map(k => RULE_SPOKEN[k]);
+      return `${t.updated ? 'updated your' : ''} ${String(t.dir).toLowerCase()} ${t.qty} ${t.contract}, ${res}${br.length ? ', rules broken: ' + andList(br) : ''}`.trim();
+    };
+    const tradeMsg = logged.length ? `Logged in your trade log: ${logged.map(tradeSay).join('; ')}. That's ${d.trades.length} of 2 today. ` : '';
     if (r.journal.length) parts.push(r.journal.length + ' journal');
     if (r.meals.length) parts.push(r.meals.length + ' meal' + (r.meals.length > 1 ? 's' : ''));
     if (r.ideas.length) parts.push(r.ideas.length + ' idea' + (r.ideas.length > 1 ? 's' : ''));
     if (r.tasks.length) parts.push(r.tasks.length + ' to-do' + (r.tasks.length > 1 ? 's' : ''));
     if (r.spend.length) parts.push(r.spend.length + ' expense' + (r.spend.length > 1 ? 's' : ''));
-    return {ok:true, message:'Saved to Cole: ' + (parts.join(', ') || 'journal') + '.', sorted:r};
+    const rest = parts.length ? 'Also saved: ' + parts.join(', ') + '.' : (logged.length ? '' : 'Saved to Cole: journal.');
+    return {ok:true, message:(tradeMsg + rest).trim(), sorted:r, trades:logged};
   };
   window.JV_coleSignedIn = () => !!uid;
   window.JV_coleSaveDoc = async (path, data) => {
