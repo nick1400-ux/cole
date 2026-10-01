@@ -17,9 +17,12 @@ Tests in `tests/` (Playwright, mocks Supabase/Claude/Spotify). On-device: relaun
 - `Documents\Spikey\shutdown.txt` → `shutdown /s /t 60` (added at Nick's request; not used yet).
 - Spikey self-updates (silently reloads) when a new version is published.
 
-## Open items for tomorrow
-1. **Dock detection broken**: watcher sees only "Integrated Monitor" (WMI + PnP) even with HP 27f + HP E233 attached → `docked=False`, so Spikey doesn't auto-open on dock. Deployed extra diagnostics (video controllers, dock devices) — read `DockWatch\diag.txt`, then fix detection (likely DisplayLink/Synaptics dock).
-2. **Spotify plays on DESKTOP-L90GM74 (another PC), not this laptop (NICK)** → that's why Nick couldn't hear it. Fixed in code: "Spikey, I can't hear the music" moves it to NICK (opens Spotify app on laptop if needed). Verify live.
-3. Closing safety: stale backtest session (running 2h+, 0 trades) should auto-end; overdue timers/reminders after a restart should be announced once, not ring in a pile. Not done yet.
-4. Turn laptop off only after tests pass (Nick's request) — shutdown flag ready.
-5. Bank slide still placeholder (Era Context needs Nick's OK). "DAS replay" = app.dasreplay.com (seen on screen).
+## Status (updated 2026-10-01 18:50 ET)
+- Dock auto-open WORKS: watcher logged `docked → launched` at 18:31 today (last night's "undocked" readings were taken with the monitors asleep / before docking settled).
+- Spotify: "Spikey, I can't hear the music" moves playback from DESKTOP-L90GM74 (another PC) to this laptop (NICK).
+- Restart-safe: stale backtest sessions auto-close; reminders missed while Spikey was closed are announced once.
+- Self-test (`?selftest=1`) is one-shot and optional; Nick said he doesn't need it — don't run it unasked.
+- Another chat also edits this repo (e.g. tradelog.js): always `git pull` and copy `spikey-src/` into the build folder before rebuilding.
+
+## Still open
+- Bank slide still placeholder (Era Context needs Nick's OK).
