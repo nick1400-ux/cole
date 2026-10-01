@@ -1008,9 +1008,14 @@ Never give specific trade calls or financial advice. If he's clearly about to br
 Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', weekday:'long', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'})} Eastern time, and he is in Miami.`;
   }
 
-  async function ask(text){
+  async function ask(text, opts){
     if (!key()) return null;
-    const messages = [...history, {role:'user', content:text}];
+    const followup = !!(opts && opts.followup);
+    // follow-ups arrive without the wake word: let Claude judge whether Nick is talking to Spikey
+    const content = followup
+      ? `${text}\n\n[Heard WITHOUT the wake word, a few seconds after your last reply. If this is clearly not directed at you (Nick talking to someone else, a phone call, TV or song lyrics, background chatter, or unrelated half-sentences), reply with exactly IGNORE and nothing else. If it continues the conversation, is a question or request you can act on, or is about you, answer normally.]`
+      : text;
+    const messages = [...history, {role:'user', content}];
     let final = '';
     for (let step = 0; step < 6; step++){
       const res = await call({model:MODEL, max_tokens:700, system:system(), tools:TOOLS, messages});
@@ -1024,6 +1029,7 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
       messages.push({role:'user', content:results});
     }
     final = final.replace(/[*_#`>]/g, '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim() || 'Done.';
+    if (followup && /^IGNORE\b/i.test(final)) return 'IGNORE';          // not for Spikey: don't add it to the conversation
     history.push({role:'user', content:text}, {role:'assistant', content:final});
     while (history.length > 16) history.shift();
     return final;
@@ -1261,7 +1267,7 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
   }
   if ('speechSynthesis' in window){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 
-  let talkTimer = null;
+  let talkTimer = null, lastSpokeEnd = 0;
   function say(text){
     set('reply', text);
     return new Promise(res => {
@@ -1274,9 +1280,12 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
         JV.speaking = true; document.body.dataset.speaking = '1';
         talkTimer = setInterval(() => { JV.level = 0.35 + Math.random()*0.55; }, 70);
       };
-      const done = () => { JV.speaking = false; document.body.dataset.speaking = '0'; clearInterval(talkTimer); JV.level = 0; res(); };
+      let finished = false;
+      const done = () => { if (finished) return; finished = true; clearTimeout(safety); lastSpokeEnd = Date.now(); JV.speaking = false; document.body.dataset.speaking = '0'; clearInterval(talkTimer); JV.level = 0; res(); };
+      // Chrome sometimes never reports the end of an utterance: don't let Spikey get stuck "talking"
+      const safety = setTimeout(done, 4000 + String(text).length * 90);
       u.onend = done; u.onerror = done;
-      speechSynthesis.speak(u);
+      try{ speechSynthesis.speak(u); }catch(e){ done(); }
     });
   }
 
@@ -1341,15 +1350,21 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
   ];
   const numWords = {one:1,two:2,to:2,too:2,three:3,four:4,for:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,first:1,second:2,third:3,fourth:4,fifth:5};
 
-  async function handle(raw){
+  const IGNORED = {ignored:true};
+  async function handle(raw, opts){
     const clean = raw.replace(/[.,!?]/g,'').trim();
     const text = clean.toLowerCase();
     if (!text) return;
-    set('reply', '');
+    if (!(opts && opts.followup)) set('reply', '');
     const brainOn = !!(window.JV_brain && window.JV_brain.hasKey());
     const brief = text.split(/\s+/).length <= 5;          // short phrases = quick commands; longer ones go to the brain
+    const followup = !!(opts && opts.followup);
     const toBrain = async () => {
-      try{ return say(await window.JV_brain.ask(raw)); }
+      try{
+        const r = await window.JV_brain.ask(raw, {followup});
+        if (followup && /^\s*IGNORE\b/i.test(r || '')) return IGNORED;
+        return say(r);
+      }
       catch(e){ return say(e.message || 'Something went wrong.'); }
     };
 
@@ -1433,6 +1448,7 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
 
     // --- everything else: ask the brain ---
     if (brainOn) return toBrain();
+    if (followup) return IGNORED;                         // no brain: don't answer chatter that isn't a command
     if (/battery|power|systems|diagnostic/.test(text)) return say(`${powerSentence() || 'Power telemetry unavailable.'} Network ${navigator.onLine ? 'online' : 'offline'}.`);
     return say(`I need my Claude key to answer that. Add it in Setup, top right.`);
   }
@@ -1460,13 +1476,43 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
   }
   renderComms();
 
-  async function run(cmd){
+  // ---------- conversation mode: after Spikey answers, keep listening without the wake word ----------
+  const CONVO_MS = 20000;
+  let convoUntil = 0, convoTimer = null;
+  function openConvo(){
+    convoUntil = Date.now() + CONVO_MS; JV.convo = true;
+    setMode('listening', 'IN CONVERSATION · JUST TALK');
+    clearTimeout(convoTimer);
+    const check = () => {
+      if (!JV.convo) return;
+      if (JV.speaking || JV.mode === 'thinking'){ convoTimer = setTimeout(check, 500); return; }
+      const left = convoUntil - Date.now();
+      if (left <= 0) return closeConvo();
+      set('stateLabel', 'IN CONVERSATION · ' + Math.ceil(left / 1000) + 'S');
+      convoTimer = setTimeout(check, 500);
+    };
+    convoTimer = setTimeout(check, 500);
+  }
+  function closeConvo(quiet){
+    if (!JV.convo) return;
+    JV.convo = false; convoUntil = 0; clearTimeout(convoTimer);
+    if (JV.mode !== 'sleep'){ setMode('idle'); if (!quiet) chime(false); }
+  }
+  const ENDERS = /^(that'?s (all|it)|never ?mind|stop listening|we'?re good|i'?m good|ok(ay)? thanks?|thanks?( you)?( spikey)?|cool thanks?|bye|later)$/;
+  async function run(cmd, followup){
     JV.awake = false; awakeUntil = 0;
+    const t = cmd.toLowerCase().replace(/[.,!?]/g, '').trim();
+    if (followup && ENDERS.test(t)){ closeConvo(); set('transcript', cmd); return; }
+    const wasConvo = JV.convo;
     if (JV.mode !== 'sleep') setMode('thinking');
-    const before = Date.now();
-    await handle(cmd);
+    const res = await handle(cmd, {followup});
+    if (res === IGNORED){                                  // wasn't meant for Spikey: stay quiet, keep the window running
+      if (JV.mode !== 'sleep'){ if (wasConvo && Date.now() < convoUntil) setMode('listening', 'IN CONVERSATION · JUST TALK'); else setMode('idle'); }
+      return;
+    }
     logComms(cmd, ($('reply') || {}).textContent || '');
-    if (JV.mode !== 'sleep') setMode('idle');
+    if (JV.mode === 'sleep'){ closeConvo(true); return; }
+    openConvo();
   }
 
   // ---------- typed commands ----------
@@ -1503,6 +1549,7 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
     };
     rec.onend = () => { bump('end'); recOn = false; if (rec) setTimeout(() => { try{ rec.start(); }catch{} }, 250); };
     rec.onresult = e => {
+      if (JV.mode === 'thinking') return;
       bump('result');
       try{ D.lastText = e.results[e.results.length-1][0].transcript; }catch{}
       if (JV.speaking && !SELFTEST) return;
@@ -1512,8 +1559,10 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
         let text = r[0].transcript, hit = null;
         for (let a = 0; a < r.length; a++){ const mm = r[a].transcript.match(WAKE); if (mm){ hit = mm; text = r[a].transcript; break; } }
         const awakeNow = Date.now() < awakeUntil;
+        const inConvo = JV.convo && Date.now() < convoUntil && JV.mode !== 'thinking';
         const tr = $('transcript');
-        if (tr){ tr.textContent = text.trim(); tr.dataset.live = (hit || awakeNow) ? '1' : '0'; }
+        if (tr){ tr.textContent = text.trim(); tr.dataset.live = (hit || awakeNow || inConvo) ? '1' : '0'; }
+        if (inConvo && !r.isFinal) convoUntil = Math.max(convoUntil, Date.now() + 6000);   // he's mid-sentence: don't close on him
         if (hit && !r.isFinal && JV.mode === 'idle'){ awakeUntil = Date.now() + 8000; JV.awake = true; setMode('listening'); }
         if (!r.isFinal) continue;
         if (hit){
@@ -1523,6 +1572,9 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
           else wake();
         } else if (awakeNow){
           run(text);
+        } else if (inConvo && Date.now() - lastSpokeEnd > 900){          // ignore the tail of Spikey's own voice
+          const words = text.trim().split(/\s+/).length;
+          if (words >= 2 || /^(yes|yeah|yep|no|nope|pause|skip|next|stop|thanks|bye)$/i.test(text.trim())) run(text, true);
         }
       }
     };
