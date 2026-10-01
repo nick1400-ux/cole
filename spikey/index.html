@@ -993,16 +993,19 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
   // Spikey lives on the laptop, so music goes to THIS computer's Spotify app (not a phone/TV that happens
   // to be "active"), unless Nick asks for another device by name
   let lastDevice = null, preferName = get('preferDevice');
+  // this laptop's name as Spotify shows it (Windows computer name). Another PC on the account
+  // (e.g. DESKTOP-…) is NOT here, so music sent there is silent for Nick.
+  const HOME = (new URLSearchParams(location.search).get('pc') || get('homeDevice') || 'NICK').toLowerCase();
+  const isHome = x => x && x.type === 'Computer' && x.name.toLowerCase() === HOME;
   async function device(opts = {}){
     let {devices} = await api('/me/player/devices');
-    const pick = list => (preferName && list.find(x => x.name.toLowerCase().includes(preferName.toLowerCase())))
-      || list.find(x => x.type === 'Computer' && x.is_active) || list.find(x => x.type === 'Computer') || null;
+    const pick = list => (preferName && list.find(x => x.name.toLowerCase().includes(preferName.toLowerCase()))) || list.find(isHome) || null;
     let d = pick(devices);
     if (!d){
       location.href = 'spotify:';                         // open the Spotify desktop app, then wait for it to show up
       for (let i = 0; i < 10 && !d; i++){ await sleep(1500); ({devices} = await api('/me/player/devices')); d = pick(devices); }
     }
-    if (!d) d = devices.find(x => x.is_active) || devices[0] || null;   // last resort: whatever Spotify has
+    if (!d) d = devices.find(x => x.type === 'Computer' && x.is_active) || devices.find(x => x.is_active) || devices[0] || null;   // last resort
     // music is going somewhere else (phone, TV, web player): move it here
     const active = devices.find(x => x.is_active);
     if (d && active && active.id !== d.id && opts.transfer !== false){
@@ -1058,13 +1061,23 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     },
     lastError: () => get('lastError'),
     lastDevice: () => lastDevice && lastDevice.name,
+    home: () => HOME,
+    async ensureHome(){                                   // start Spotify on the laptop if it isn't running, then move music here
+      let {devices} = await api('/me/player/devices'); let h = devices.find(isHome);
+      if (!h){ location.href = 'spotify:'; for (let i = 0; i < 10 && !h; i++){ await sleep(1500); ({devices} = await api('/me/player/devices')); h = devices.find(isHome); } }
+      if (!h) return "I couldn't get Spotify running on this laptop. Open the Spotify app here, then ask again.";
+      put('preferDevice', ''); preferName = '';
+      await api('/me/player', {method:'PUT', body:JSON.stringify({device_ids:[h.id], play:true})});
+      setTimeout(nowPlaying, 1500);
+      return 'Moved the music to this laptop.';
+    },
     async devices(){ const {devices} = await api('/me/player/devices'); return devices.map(d => ({name:d.name, type:d.type, active:d.is_active, volume:d.volume_percent})); },
     async moveTo(name){
       const {devices} = await api('/me/player/devices');
       const want = String(name || '').toLowerCase();
-      const d = /laptop|computer|pc|here|this/.test(want) ? devices.find(x => x.type === 'Computer') : devices.find(x => x.name.toLowerCase().includes(want) || x.type.toLowerCase() === want || (want.includes('phone') && x.type === 'Smartphone'));
+      const d = /laptop|computer|pc|here|this/.test(want) && !/desktop/.test(want) ? (devices.find(isHome) || devices.find(x => x.type === 'Computer')) : devices.find(x => x.name.toLowerCase().includes(want) || x.type.toLowerCase() === want || (want.includes('phone') && x.type === 'Smartphone'));
       if (!d) return 'I don\'t see that device. Spotify sees: ' + (devices.map(x => x.name).join(', ') || 'nothing') + '.';
-      put('preferDevice', d.type === 'Computer' ? '' : d.name); preferName = get('preferDevice');
+      put('preferDevice', isHome(d) ? '' : d.name); preferName = get('preferDevice');
       await api('/me/player', {method:'PUT', body:JSON.stringify({device_ids:[d.id], play:true})});
       setTimeout(nowPlaying, 1500);
       return 'Music is on ' + d.name + ' now.';
@@ -1087,7 +1100,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     const emb = $('spotifyMain'); if (emb) emb.style.display = 'none';
     box.style.display = 'flex';
     box.innerHTML = c
-      ? `<img src="${c.art || ''}" alt=""><div class="np"><b>${c.name.replace(/</g,'&lt;')}</b><span>${c.artist.replace(/</g,'&lt;')}</span>${c.device ? `<span style="font-size:11px;color:${c.dtype === 'Computer' ? 'var(--mute)' : 'var(--a)'}">🔊 ${c.device.replace(/</g,'&lt;')}${c.vol != null ? ' · ' + c.vol + '%' : ''}</span>` : ''}
+      ? `<img src="${c.art || ''}" alt=""><div class="np"><b>${c.name.replace(/</g,'&lt;')}</b><span>${c.artist.replace(/</g,'&lt;')}</span>${c.device ? `<span style="font-size:11px;color:${c.device.toLowerCase() === HOME ? 'var(--mute)' : 'var(--a)'}">🔊 ${c.device.replace(/</g,'&lt;')}${c.vol != null ? ' · ' + c.vol + '%' : ''}</span>` : ''}
          <div class="npc"><button data-sp="previous">⏮</button><button data-sp="${c.playing ? 'pause' : 'resume'}">${c.playing ? '⏸' : '▶'}</button><button data-sp="next">⏭</button></div></div>`
       : `<div class="np"><b>Spotify connected</b><span>Say “Spikey, play …”</span></div>`;
     box.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => window.JV_spotify.control(b.dataset.sp).catch(() => {}));
@@ -1140,7 +1153,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     {type:'web_search_20250305', name:'web_search', max_uses:3},
     {name:'play_spotify', description:'Play a song, artist, album or playlist on Nick\'s Spotify (Premium).', input_schema:{type:'object', properties:{query:{type:'string', description:'e.g. "Lose Yourself Eminem" or "techno bunker"'}, type:{type:'string', enum:['track','artist','album','playlist']}}, required:['query']}},
     {name:'spotify_where', description:'Which device Spotify is playing on (and its volume), plus all devices Spotify sees. Use when Nick cannot hear the music.', input_schema:{type:'object', properties:{}}},
-    {name:'spotify_move', description:'Move Spotify playback to a device: "computer"/"laptop" or a device name like phone, TV.', input_schema:{type:'object', properties:{device:{type:'string'}}, required:['device']}},
+    {name:'spotify_move', description:'Move Spotify playback to a device: "laptop" (this computer, named NICK) or a device name like phone, TV, DESKTOP-…. If Nick cannot hear music and it is playing on a device other than NICK, move it to "laptop".', input_schema:{type:'object', properties:{device:{type:'string'}}, required:['device']}},
     {name:'spotify_control', description:'Pause, resume, skip, go back, set volume (0-100) or shuffle on Spotify.', input_schema:{type:'object', properties:{action:{type:'string', enum:['pause','resume','next','previous','volume','shuffle']}, value:{type:'number'}}, required:['action']}},
     {name:'open_youtube', description:'Open YouTube search results in Chrome. To PLAY a specific video, find its youtube.com/watch URL with web_search and use open_screen so it plays inside Spikey.', input_schema:{type:'object', properties:{query:{type:'string'}}, required:['query']}},
     {name:'open_tradingview', description:'Open a TradingView chart. Futures use TradingView symbols like CME_MINI:NQ1!, CBOT_MINI:YM1!, CBOT_MINI:MYM1!, COMEX:GC1!, CME_MINI:ES1!.', input_schema:{type:'object', properties:{symbol:{type:'string'}}, required:['symbol']}},
@@ -1810,9 +1823,9 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
         try{
           const w = await window.JV_spotify.where(), list = await window.JV_spotify.devices();
           const act = list.find(d => d.active);
-          if (/can'?t|cannot|don'?t|no sound|hear/.test(text) && act && act.type !== 'Computer'){ const r = await window.JV_spotify.moveTo('computer'); return say(w + ' ' + r); }
+          if (/can'?t|cannot|don'?t|no sound|hear/.test(text) && (!act || act.name.toLowerCase() !== window.JV_spotify.home())){ const r = await window.JV_spotify.ensureHome(); return say(w + ' ' + r); }
           if (/can'?t|cannot|don'?t|no sound|hear/.test(text) && act && act.volume === 0){ await window.JV_spotify.control('volume', 70); return say(w + ' Its volume was at zero, so I turned it up.'); }
-          return say(w + (/can'?t|cannot|don'?t|no sound|hear/.test(text) ? ' Spotify is sending sound to this computer, so check the laptop volume or which speaker Windows is using.' : ''));
+          return say(w + (/can'?t|cannot|don'?t|no sound|hear/.test(text) ? ' That is this laptop, so check the Windows volume and which speaker it is using.' : ''));
         }catch(e){ return say(e.message); }
       }
       if ((m = text.match(/^(?:play (?:it |the music |music |spotify )?on|move (?:it|the music|spotify) to|switch (?:it|the music|spotify) to|put (?:it|the music) on) (?:my |the )?(.+)$/))){
