@@ -1581,7 +1581,17 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
   const numWords = {one:1,two:2,to:2,too:2,three:3,four:4,for:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,first:1,second:2,third:3,fourth:4,fifth:5};
 
   const IGNORED = {ignored:true};
+  const VERB = '(?:open|close|show|hide|start|stop|end|pause|resume|play|skip|minimi[sz]e|pull up|bring up|put up|exit|launch|add|log|read|delete|remove|turn|switch|go to|let\'?s)';
+  const SPLIT = new RegExp('\\s+(?:and then|and|then)\\s+(?=(?:(?:can you|please|also|now)\\s+)?' + VERB + '\\b)', 'i');
   async function handle(raw, opts){
+    // two commands in one breath → do them one after the other
+    if (!(opts && opts.noSplit) && new RegExp('^(?:(?:can you|please)\\s+)?' + VERB + '\\b', 'i').test(raw.trim()) && SPLIT.test(raw)){
+      const parts = raw.split(SPLIT).map(x => x.replace(/^(can you|please|also|now)\s+/i, '').trim()).filter(Boolean);
+      if (parts.length > 1 && parts.length <= 4){
+        for (const part of parts) await handle(part, {...(opts || {}), noSplit:true});
+        return;
+      }
+    }
     const clean = raw.replace(/\bback[- ]?test/gi,'backtest').replace(/(?<!\d)\.|\.(?!\d)|[,!?]/g,'').trim();   // keep decimals like 1.5
     raw = raw.replace(/\bback[- ]?test/gi, 'backtest');
     const text = clean.toLowerCase();
@@ -1659,11 +1669,19 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
       if (window.JV_bigChart) window.JV_bigChart(true);
       return say('Chart is up.');
     }
+    // --- "close that" closes whatever full screen is up ---
+    if (/^(close|exit|hide|shut|minimi[sz]e)( it| that| this| the screen| the page| everything| all( of)? (it|them)| out)?$/.test(text)){
+      let did = false;
+      if (window.JV_journal && window.JV_journal.isOpen()){ window.JV_journal.hide(); did = true; }
+      if (window.JV_custom && window.JV_custom.isOpen()){ window.JV_custom.closeScreen(); did = true; }
+      if (window.JV_backtest && window.JV_backtest.active() && document.querySelector('#btPanel.open')){ window.JV_backtest.hide(); did = true; }
+      if (did) return say('Closed.');
+    }
     // --- journal: every entry, grouped by category, on its own screen ---
     if (window.JV_journal){
       const J = window.JV_journal;
-      if (/^(close|hide|exit)( the| my)? journals?( screen)?$/.test(text)){ J.hide(); return say('Journal closed.'); }
-      if (/\bjournal/.test(text) && !/^(log|journal that|add|write|put|save|note)\b/.test(text) && !/\b(log|add|write|save|put) (this|that|it)\b/.test(text)
+      if (/^(close|hide|exit|shut|minimi[sz]e|get rid of|take down|put away)( out of)?( the| my| that)? journals?( entries| entry| screen| page| logs?)?$/.test(text)){ J.hide(); return say('Journal closed.'); }
+      if (/\bjournal/.test(text) && !/^(close|hide|exit|shut|minimi[sz]e|get rid of|take down|put away)\b/.test(text) && !/^(log|journal that|add|write|put|save|note)\b/.test(text) && !/\b(log|add|write|save|put) (this|that|it)\b/.test(text)
           && (brief || /\b(entries|entry|show|read|open|pull up|bring up|what('?s| is| did)|all)\b/.test(text))){
         const r = /\btoday\b/.test(text) ? 'today' : /\bthis week|\bweek\b/.test(text) ? 'week' : /\bmonth\b/.test(text) ? 'month' : 'all';
         return say(J.open(r));
@@ -2111,7 +2129,8 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
   const panel = document.createElement('section'); panel.id = 'btPanel';
   document.body.appendChild(panel);
   let dirSel = 'long', shown = false;
-  const show = v => { shown = v; drawPanel(); };
+  const show = v => { shown = v; if (v) window.dispatchEvent(new CustomEvent('spikey-screen', {detail:'backtest'})); drawPanel(); };
+  window.addEventListener('spikey-screen', e => { if (e.detail !== 'backtest' && shown){ shown = false; drawPanel(); } });
   function drawPanel(){
     const s = session(), st = stats(s);
     const on = !!s && shown;
@@ -2274,10 +2293,12 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
   }
   function show(r){
     if (r) range = r;
+    window.dispatchEvent(new CustomEvent('spikey-screen', {detail:'journal'}));
     const g = draw(); shown = true; panel.classList.add('open');
     return g;
   }
   function hide(){ shown = false; panel.classList.remove('open'); }
+  window.addEventListener('spikey-screen', e => { if (e.detail !== 'journal' && shown) hide(); });
   window.addEventListener('cole-update', () => { if (shown) draw(); });
 
   // spoken summary: how many per category, plus the newest one in each
@@ -2533,9 +2554,11 @@ HTML>>>`;
     web.querySelector('#webTitle').textContent = String(webState.title).toUpperCase();
     web.querySelector('#webUrl').textContent = hostOf(url);
     web.querySelector('#webFrame').src = u;
+    window.dispatchEvent(new CustomEvent('spikey-screen', {detail:'web'}));
     web.classList.add('open');
     return `${webState.title} is up on screen.`;
   }
+  window.addEventListener('spikey-screen', e => { if (e.detail !== 'web' && webState) closeScreen(); });
   function closeScreen(){ web.classList.remove('open'); const f = web.querySelector('#webFrame'); f.src = 'about:blank'; webState = null; }
 
   // slides.js asks us to fill a custom slide when it comes on screen
