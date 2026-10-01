@@ -1769,7 +1769,8 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
   const SPLIT = new RegExp('\\s+(?:and then|and|then)\\s+(?=(?:(?:can you|please|also|now)\\s+)?' + VERB + '\\b)', 'i');
   async function handle(raw, opts){
     // two commands in one breath → do them one after the other
-    if (!(opts && opts.noSplit) && new RegExp('^(?:(?:can you|please)\\s+)?' + VERB + '\\b', 'i').test(raw.trim()) && SPLIT.test(raw)){
+    const routerOn = () => !!(window.JV_router && window.JV_brain && window.JV_brain.hasKey());
+    if (!(opts && opts.noSplit) && !routerOn() && new RegExp('^(?:(?:can you|please)\\s+)?' + VERB + '\\b', 'i').test(raw.trim()) && SPLIT.test(raw)){
       const parts = raw.split(SPLIT).map(x => x.replace(/^(can you|please|also|now)\s+/i, '').trim()).filter(Boolean);
       if (parts.length > 1 && parts.length <= 4){
         for (const part of parts) await handle(part, {...(opts || {}), noSplit:true});
@@ -1786,7 +1787,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
     const followup = !!(opts && opts.followup);
     const toBrain = async () => {
       try{
-        const r = await window.JV_brain.ask(raw, {followup});
+        const r = await window.JV_brain.ask((opts && opts.original) || raw, {followup});
         if (followup && /^\s*IGNORE\b/i.test(r || '')) return IGNORED;
         return say(r);
       }
@@ -1796,6 +1797,26 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
     if (JV.mode === 'sleep'){
       if (/wake up|come online|i'?m back|online/.test(text)){ setMode('idle'); return briefing(`Welcome back, ${CONFIG.name}.`); }
       return;
+    }
+    // --- understanding layer: long, compound or follow-up phrasing goes through the router first ---
+    const canonical = !!(opts && (opts.canonical || opts.viaShortcut));
+    const routeIt = async () => {
+      const alts = (opts && opts.alts) || (JV.lastAltsAt && Date.now() - JV.lastAltsAt < 4000 ? JV.lastAlts : []);
+      const r = await window.JV_router.route(raw, {alts, followup});
+      if (!r) return null;
+      if (r.ignore) return followup ? IGNORED : null;
+      if (r.brain) return toBrain();
+      if (r.commands){
+        D.lastRoute = r.commands.join(' | ');
+        for (const c of r.commands) await handle(c, {canonical:true, noSplit:true, original:raw});
+        return true;
+      }
+      return null;
+    };
+    if (!canonical && routerOn() && (text.split(/\s+/).length > 6 || /\b(and|then|also|plus)\b/.test(text) || followup)){
+      const r = await routeIt();
+      if (r === IGNORED) return IGNORED;
+      if (r) return;
     }
     // --- timers, reminders, alarms, protocols, status report, news (assist.js) ---
     if (window.JV_assist && !(opts && opts.followup && text.split(' ').length > 8)){
@@ -1984,7 +2005,11 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
     if (/^(hello|hey|hi|yo)$/.test(text)) return say(`${greetingWord()}, ${CONFIG.name}.`);
 
     // --- everything else: ask the brain ---
-    if (brainOn) return toBrain();
+    if (brainOn){
+      // nothing local matched: let the router translate it into a known command before falling back to the full brain
+      if (!canonical && routerOn()){ const r = await routeIt(); if (r === IGNORED) return IGNORED; if (r) return; }
+      return toBrain();
+    }
     if (followup) return IGNORED;                         // no brain: don't answer chatter that isn't a command
     if (/battery|power|systems|diagnostic/.test(text)) return say(`${powerSentence() || 'Power telemetry unavailable.'} Network ${navigator.onLine ? 'online' : 'offline'}.`);
     return say(`I need my Claude key to answer that. Add it in Setup, top right.`);
@@ -2116,6 +2141,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
         if (inConvo && !r.isFinal) convoUntil = Math.max(convoUntil, Date.now() + 6000);   // he's mid-sentence: don't close on him
         if (hit && !r.isFinal && JV.mode === 'idle'){ awakeUntil = Date.now() + 8000; JV.awake = true; setMode('listening'); }
         if (!r.isFinal) continue;
+        try{ JV.lastAlts = Array.from({length:r.length}, (_, a) => r[a].transcript); JV.lastAltsAt = Date.now(); }catch{}
         if (hit){
           const after = text.slice(hit.index + hit[0].length).replace(/^[\s,.!?]+/, '');
           if (JV.mode === 'sleep'){ if (after) run(after); }
@@ -3153,6 +3179,95 @@ HTML>>>`;
 
 </script>
 <script>
+/* ===== Understanding layer: turns ANY way Nick says something into Spikey's exact commands =====
+   Fast regex commands still run instantly for the phrasings they know. Everything else (new wording,
+   mis-heard words, two or three requests in one breath, slang) goes through a quick Claude call that
+   maps it onto the command catalog below, or hands it to the full brain for questions and open requests. */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  const MODEL = 'claude-haiku-4-5-20251001';
+  const key = () => { try{ return localStorage.getItem('spikey.claudeKey') || ''; }catch{ return ''; } };
+
+  const CATALOG = `SCREENS
+- "open my journal" | "open my journal today" | "open my journal this week" | "open my journal this month" | "close journal"
+- "let's start backtesting" (opens the backtest logging screen) | "show backtest" | "minimize backtest" | "end backtest" | "undo last backtest trade" | "how's my backtest going"
+- "backtest <long|short> <win|loss|breakeven> <R>R"  e.g. "backtest long win 2R", "backtest short loss 1R", "backtest long breakeven 0R"
+- "what can you do" (capabilities screen) | "close it" (closes whatever screen/slide is up)
+SLIDES (center screen)
+- "open my diet tracking" (fuel: protein, calories, meals) | "open my finances" (money) | "open my trading" (week P&L, discipline) | "open my habits" | "open my agenda" (objectives)
+- "show <custom slide title>" | "delete the <custom slide title> slide" | "stop slides" | "start slides" | "next slide"
+OBJECTIVES (same list as Cole to-dos)
+- "add task <text>" | "complete objective <number>" | "clear the objective list" | "read my objectives" | "refresh the objective list"
+MUSIC (Spotify)
+- "play <song/artist/album>" | "play playlist <name>" | "pause" | "resume" | "skip" | "previous song" | "where's the music playing" | "I can't hear the music" | "play it on <laptop|phone|device name>" | "reconnect spotify"
+TIME
+- "set a <N minute|N second|N hour> timer for <label>" | "remind me in <N minutes> to <thing>" | "remind me at <3pm|15:30> to <thing>" | "wake me up at <time>" | "cancel the <label> timer" | "cancel all timers" | "what timers do I have"
+PROTOCOLS / SYSTEM
+- "market mode" | "backtest mode" | "morning protocol" | "wrap up my day" | "house party protocol" | "focus mode" | "focus off"
+- "status report" | "economic news today" | "how was my day" | "what's my P&L" | "briefing" | "what time is it" | "weather"
+- "what have you learned" | "forget <rule or shortcut>" | "go to sleep" | "show <NAS100|US30|SPX500|GOLD|BTC|OIL|DXY>" (big chart) | "close chart"
+- "open <youtube|gmail|calendar|tradingview|instagram|github|claude>" (in Chrome)`;
+
+  const SYS = ctx => `You are the ears of Spikey, Nick's voice assistant. Speech-to-text is imperfect and Nick talks naturally (slang, filler, run-on requests, several requests in one sentence). Your job: understand what he MEANS and translate it into Spikey's exact commands.
+
+Command catalog (use these exact phrasings, fill the <slots>):
+${CATALOG}
+${ctx}
+
+Reply with ONE JSON object only:
+{"intent":"commands","commands":["exact command", ...]}  when the request maps onto the catalog (keep his order; up to 5 commands; one per action)
+{"intent":"brain"}   for questions, conversation, anything needing judgement, web search, logging to Cole (journal/meals/trades/spending), building a new slide, opening a website/video inside Spikey, teaching Spikey a rule or shortcut ("from now on…", "when I say…"), or anything not in the catalog
+{"intent":"ignore"}  ONLY when the text is clearly not meant for Spikey (talking to someone else, TV, lyrics, fragments)${ctx.includes('FOLLOW-UP') ? '' : ' — this message used the wake word, so never ignore it'}
+
+Rules:
+- Fix mis-hearings using context: "back testing"/"back to sting"/"backtrace" → backtest; "objective list"/"to do"/"tasks" are the same list; "spiky/spikey/sparky" is his name for you, drop it.
+- "clear it/that", "get rid of that objective", "I did it" while objectives are on screen → "clear the objective list" if only one is open, else "complete objective <n>" when he names which.
+- Mixed requests: split into several commands, e.g. "kill the journal and pull up backtesting" → ["close journal","let's start backtesting"].
+- If one part is a catalog command and another part needs judgement, use {"intent":"brain"}.
+- Never invent things he didn't ask for.`;
+
+  function context(){
+    const bits = [];
+    const C = window.JV_custom; if (C){ const l = C.list(); if (l.length) bits.push('Custom slides: ' + l.map(s => '"' + s.title + '"').join(', ')); }
+    const L = window.JV_learn; if (L){ const x = L.list(); if (x.shortcuts.length) bits.push('His voice shortcuts (say them exactly as a command): ' + x.shortcuts.map(s => '"' + s.phrase + '"').join(', ')); }
+    const T = window.JV_tasks; if (T){ const t = T.list(); bits.push(`Open objectives (${t.length}): ` + t.slice(0, 8).map((x, i) => (i + 1) + '. ' + x).join(' | ')); }
+    const open = [];
+    if (window.JV_journal && window.JV_journal.isOpen()) open.push('journal');
+    if (document.querySelector('#btPanel.open')) open.push('backtest screen');
+    if (window.JV_custom && window.JV_custom.isOpen()) open.push('website/video screen');
+    const sl = document.querySelector('#slides .slide.on h2'); if (sl) open.push('slide "' + sl.innerText.split('\n')[0] + '"');
+    bits.push('On screen now: ' + (open.join(', ') || 'just the logo'));
+    if (window.JV_backtest && window.JV_backtest.active()) bits.push('A backtest session is running (bare "long win 2R" style phrases are backtest trades).');
+    return bits.join('\n');
+  }
+
+  async function route(text, opts = {}){
+    if (!key()) return null;
+    const alts = (opts.alts || []).filter(a => a && a.trim() && a.trim().toLowerCase() !== text.trim().toLowerCase()).slice(0, 3);
+    const ctx = context() + (opts.followup ? '\nThis is a FOLLOW-UP heard without the wake word, a few seconds after Spikey spoke.' : '');
+    const user = `Nick said: "${text}"` + (alts.length ? `\nOther ways the speech engine heard it: ${alts.map(a => '"' + a + '"').join(', ')}` : '');
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 6000);
+    try{
+      const r = await fetch('https://api.anthropic.com/v1/messages', {method:'POST', signal:ctl.signal,
+        headers:{'content-type':'application/json', 'x-api-key':key(), 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:MODEL, max_tokens:300, system:SYS(ctx), messages:[{role:'user', content:user}]})});
+      if (!r.ok) return null;
+      const j = await r.json();
+      const t = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+      const m = t.match(/\{[\s\S]*\}/); if (!m) return null;
+      const out = JSON.parse(m[0]);
+      if (out.intent === 'commands' && Array.isArray(out.commands) && out.commands.length) return {commands: out.commands.map(String).filter(Boolean).slice(0, 5)};
+      if (out.intent === 'ignore') return {ignore: true};
+      if (out.intent === 'brain') return {brain: true};
+      return null;
+    }catch{ return null; }
+    finally{ clearTimeout(timer); }
+  }
+  window.JV_router = {route, catalog: CATALOG};
+})();
+
+</script>
+<script>
 /* ===== Setup panel: Claude key, Spotify, Cole ===== */
 (() => {
   if (new URLSearchParams(location.search).get('screen') === 'side') return;
@@ -3549,6 +3664,49 @@ HTML>>>`;
     try{ await Promise.race([window.JV_coleReady, wait(8000)]); }catch{}
     await wait(1500);
     runAll();
+  })();
+})();
+
+/* ===== Silent understanding check: ?routercheck=1 sends tricky phrasings through the router (real Claude)
+   and shows what each one would run. Nothing is executed or spoken. ===== */
+(() => {
+  const Q = new URLSearchParams(location.search);
+  if (!Q.get('routercheck') || Q.get('screen') === 'side') return;
+  let silent = false; try{ silent = sessionStorage.getItem('spikey.silentReload') === '1'; }catch{}
+  try{ Q.delete('routercheck'); history.replaceState(null, '', location.pathname + (Q.toString() ? '?' + Q : '')); }catch{}
+  if (silent) return;
+  const CASES = [
+    ['yo kill the journal real quick and pull up the back to sting thing', c => c && /close journal/.test(c.join('|')) && /backtesting/.test(c.join('|'))],
+    ['bro i need to see how much protein i got in me today', c => c && /diet tracking/.test(c.join('|'))],
+    ['get that diet stuff off my screen and show me my money', c => c && /finances/.test(c.join('|'))],
+    ['throw a ten minute timer on for the chicken', c => c && /10 minute timer|ten minute timer/.test(c.join('|'))],
+    ['shush the music for a sec', c => c && /^pause$/.test(c[0])],
+    ['bring my bread back up', c => c && /finances/.test(c.join('|'))],
+    ['run it back on that last song', c => c && /previous/.test(c.join('|'))],
+    ['i went long and got stopped out for a full r', c => c && /backtest long loss 1R/i.test(c.join('|'))],
+    ['ping me at 4 to call my uncle', c => c && /remind me at 4/.test(c.join('|'))],
+    ['who won the heat game last night', (c, r) => r && r.brain],
+    ['what do i got going on today', c => c && /objectives|agenda/.test(c.join('|'))],
+    ['lock in time i got trading to do', c => c && /market mode|focus mode/.test(c.join('|'))]
+  ];
+  (async () => {
+    await new Promise(r => setTimeout(r, 12000));
+    const box = document.createElement('section');
+    box.style.cssText = 'position:fixed;left:14px;top:66px;z-index:60;width:min(760px,55vw);max-height:84vh;overflow:auto;background:#07060a;border:1px solid var(--a2);border-radius:12px;padding:12px 14px;font:12.5px/1.45 var(--f-mono);color:var(--txt)';
+    box.innerHTML = '<b style="color:var(--a2);letter-spacing:.2em">UNDERSTANDING CHECK (nothing is executed)</b>';
+    document.body.appendChild(box);
+    let pass = 0;
+    for (const [said, ok] of CASES){
+      let r = null; try{ r = await window.JV_router.route(said, {}); }catch{}
+      const good = !!ok(r && r.commands, r);
+      if (good) pass++;
+      const d = document.createElement('div'); d.style.cssText = 'padding:5px 0;border-bottom:1px solid rgba(255,255,255,.08)';
+      d.innerHTML = `<b style="color:${good ? 'var(--good)' : '#ff2d55'}">${good ? 'OK ' : 'MISS'}</b> “${said}”<div style="color:var(--mute)">→ ${r ? (r.commands ? r.commands.join('  |  ') : r.brain ? '(full brain)' : '(ignore)') : '(no answer)'}</div>`;
+      box.appendChild(d);
+    }
+    const s = document.createElement('div'); s.style.cssText = 'margin-top:8px;font:600 15px var(--f-display)'; s.textContent = `${pass}/${CASES.length} understood`; box.appendChild(s);
+    try{ localStorage.setItem('spikey.routercheck', JSON.stringify({at:Date.now(), pass, total:CASES.length})); }catch{}
+    setTimeout(() => box.remove(), 180000);
   })();
 })();
 

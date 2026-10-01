@@ -352,7 +352,8 @@
   const SPLIT = new RegExp('\\s+(?:and then|and|then)\\s+(?=(?:(?:can you|please|also|now)\\s+)?' + VERB + '\\b)', 'i');
   async function handle(raw, opts){
     // two commands in one breath → do them one after the other
-    if (!(opts && opts.noSplit) && new RegExp('^(?:(?:can you|please)\\s+)?' + VERB + '\\b', 'i').test(raw.trim()) && SPLIT.test(raw)){
+    const routerOn = () => !!(window.JV_router && window.JV_brain && window.JV_brain.hasKey());
+    if (!(opts && opts.noSplit) && !routerOn() && new RegExp('^(?:(?:can you|please)\\s+)?' + VERB + '\\b', 'i').test(raw.trim()) && SPLIT.test(raw)){
       const parts = raw.split(SPLIT).map(x => x.replace(/^(can you|please|also|now)\s+/i, '').trim()).filter(Boolean);
       if (parts.length > 1 && parts.length <= 4){
         for (const part of parts) await handle(part, {...(opts || {}), noSplit:true});
@@ -369,7 +370,7 @@
     const followup = !!(opts && opts.followup);
     const toBrain = async () => {
       try{
-        const r = await window.JV_brain.ask(raw, {followup});
+        const r = await window.JV_brain.ask((opts && opts.original) || raw, {followup});
         if (followup && /^\s*IGNORE\b/i.test(r || '')) return IGNORED;
         return say(r);
       }
@@ -379,6 +380,26 @@
     if (JV.mode === 'sleep'){
       if (/wake up|come online|i'?m back|online/.test(text)){ setMode('idle'); return briefing(`Welcome back, ${CONFIG.name}.`); }
       return;
+    }
+    // --- understanding layer: long, compound or follow-up phrasing goes through the router first ---
+    const canonical = !!(opts && (opts.canonical || opts.viaShortcut));
+    const routeIt = async () => {
+      const alts = (opts && opts.alts) || (JV.lastAltsAt && Date.now() - JV.lastAltsAt < 4000 ? JV.lastAlts : []);
+      const r = await window.JV_router.route(raw, {alts, followup});
+      if (!r) return null;
+      if (r.ignore) return followup ? IGNORED : null;
+      if (r.brain) return toBrain();
+      if (r.commands){
+        D.lastRoute = r.commands.join(' | ');
+        for (const c of r.commands) await handle(c, {canonical:true, noSplit:true, original:raw});
+        return true;
+      }
+      return null;
+    };
+    if (!canonical && routerOn() && (text.split(/\s+/).length > 6 || /\b(and|then|also|plus)\b/.test(text) || followup)){
+      const r = await routeIt();
+      if (r === IGNORED) return IGNORED;
+      if (r) return;
     }
     // --- timers, reminders, alarms, protocols, status report, news (assist.js) ---
     if (window.JV_assist && !(opts && opts.followup && text.split(' ').length > 8)){
@@ -567,7 +588,11 @@
     if (/^(hello|hey|hi|yo)$/.test(text)) return say(`${greetingWord()}, ${CONFIG.name}.`);
 
     // --- everything else: ask the brain ---
-    if (brainOn) return toBrain();
+    if (brainOn){
+      // nothing local matched: let the router translate it into a known command before falling back to the full brain
+      if (!canonical && routerOn()){ const r = await routeIt(); if (r === IGNORED) return IGNORED; if (r) return; }
+      return toBrain();
+    }
     if (followup) return IGNORED;                         // no brain: don't answer chatter that isn't a command
     if (/battery|power|systems|diagnostic/.test(text)) return say(`${powerSentence() || 'Power telemetry unavailable.'} Network ${navigator.onLine ? 'online' : 'offline'}.`);
     return say(`I need my Claude key to answer that. Add it in Setup, top right.`);
@@ -699,6 +724,7 @@
         if (inConvo && !r.isFinal) convoUntil = Math.max(convoUntil, Date.now() + 6000);   // he's mid-sentence: don't close on him
         if (hit && !r.isFinal && JV.mode === 'idle'){ awakeUntil = Date.now() + 8000; JV.awake = true; setMode('listening'); }
         if (!r.isFinal) continue;
+        try{ JV.lastAlts = Array.from({length:r.length}, (_, a) => r[a].transcript); JV.lastAltsAt = Date.now(); }catch{}
         if (hit){
           const after = text.slice(hit.index + hit[0].length).replace(/^[\s,.!?]+/, '');
           if (JV.mode === 'sleep'){ if (after) run(after); }

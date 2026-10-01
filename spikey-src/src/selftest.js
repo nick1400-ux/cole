@@ -73,3 +73,46 @@
     runAll();
   })();
 })();
+
+/* ===== Silent understanding check: ?routercheck=1 sends tricky phrasings through the router (real Claude)
+   and shows what each one would run. Nothing is executed or spoken. ===== */
+(() => {
+  const Q = new URLSearchParams(location.search);
+  if (!Q.get('routercheck') || Q.get('screen') === 'side') return;
+  let silent = false; try{ silent = sessionStorage.getItem('spikey.silentReload') === '1'; }catch{}
+  try{ Q.delete('routercheck'); history.replaceState(null, '', location.pathname + (Q.toString() ? '?' + Q : '')); }catch{}
+  if (silent) return;
+  const CASES = [
+    ['yo kill the journal real quick and pull up the back to sting thing', c => c && /close journal/.test(c.join('|')) && /backtesting/.test(c.join('|'))],
+    ['bro i need to see how much protein i got in me today', c => c && /diet tracking/.test(c.join('|'))],
+    ['get that diet stuff off my screen and show me my money', c => c && /finances/.test(c.join('|'))],
+    ['throw a ten minute timer on for the chicken', c => c && /10 minute timer|ten minute timer/.test(c.join('|'))],
+    ['shush the music for a sec', c => c && /^pause$/.test(c[0])],
+    ['bring my bread back up', c => c && /finances/.test(c.join('|'))],
+    ['run it back on that last song', c => c && /previous/.test(c.join('|'))],
+    ['i went long and got stopped out for a full r', c => c && /backtest long loss 1R/i.test(c.join('|'))],
+    ['ping me at 4 to call my uncle', c => c && /remind me at 4/.test(c.join('|'))],
+    ['who won the heat game last night', (c, r) => r && r.brain],
+    ['what do i got going on today', c => c && /objectives|agenda/.test(c.join('|'))],
+    ['lock in time i got trading to do', c => c && /market mode|focus mode/.test(c.join('|'))]
+  ];
+  (async () => {
+    await new Promise(r => setTimeout(r, 12000));
+    const box = document.createElement('section');
+    box.style.cssText = 'position:fixed;left:14px;top:66px;z-index:60;width:min(760px,55vw);max-height:84vh;overflow:auto;background:#07060a;border:1px solid var(--a2);border-radius:12px;padding:12px 14px;font:12.5px/1.45 var(--f-mono);color:var(--txt)';
+    box.innerHTML = '<b style="color:var(--a2);letter-spacing:.2em">UNDERSTANDING CHECK (nothing is executed)</b>';
+    document.body.appendChild(box);
+    let pass = 0;
+    for (const [said, ok] of CASES){
+      let r = null; try{ r = await window.JV_router.route(said, {}); }catch{}
+      const good = !!ok(r && r.commands, r);
+      if (good) pass++;
+      const d = document.createElement('div'); d.style.cssText = 'padding:5px 0;border-bottom:1px solid rgba(255,255,255,.08)';
+      d.innerHTML = `<b style="color:${good ? 'var(--good)' : '#ff2d55'}">${good ? 'OK ' : 'MISS'}</b> “${said}”<div style="color:var(--mute)">→ ${r ? (r.commands ? r.commands.join('  |  ') : r.brain ? '(full brain)' : '(ignore)') : '(no answer)'}</div>`;
+      box.appendChild(d);
+    }
+    const s = document.createElement('div'); s.style.cssText = 'margin-top:8px;font:600 15px var(--f-display)'; s.textContent = `${pass}/${CASES.length} understood`; box.appendChild(s);
+    try{ localStorage.setItem('spikey.routercheck', JSON.stringify({at:Date.now(), pass, total:CASES.length})); }catch{}
+    setTimeout(() => box.remove(), 180000);
+  })();
+})();
