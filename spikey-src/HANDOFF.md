@@ -24,5 +24,7 @@ Tests in `tests/` (Playwright, mocks Supabase/Claude/Spotify). On-device: relaun
 - Self-test (`?selftest=1`) is one-shot and optional; Nick said he doesn't need it — don't run it unasked.
 - Another chat also edits this repo (e.g. tradelog.js): always `git pull` and copy `spikey-src/` into the build folder before rebuilding.
 
+- Understanding layer (`router.js`): anything that isn't an exact quick phrase (long, compound, slang, mis-heard) goes through a fast Claude call that maps it onto the command catalog, or to the full brain. Live check on the laptop: 12/12 unseen casual phrasings understood. Silent re-check: relaunch with `?routercheck=1` (nothing executed or spoken). When adding a new command, add it to CATALOG in router.js.
+
 ## Still open
 - Bank slide still placeholder (Era Context needs Nick's OK).
