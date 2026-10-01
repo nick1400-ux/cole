@@ -674,6 +674,11 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     return {ok:true, message:'Saved to Cole: ' + (parts.join(', ') || 'journal') + '.', sorted:r};
   };
   window.JV_coleSignedIn = () => !!uid;
+  window.JV_coleSaveDoc = async (path, data) => {
+    if (!sb || !uid) return false;
+    const {error} = await sb.from('cole_docs').upsert({user_id:uid, path, data, updated_at:new Date().toISOString()}, {onConflict:'user_id,path'});
+    return !error;
+  };
   window.JV_coleTodos = () => (uid || todos.length) ? todos.slice() : null;
   const signed = n => (n >= 0 ? 'up ' : 'down ') + speakMoney(n);
 
@@ -962,6 +967,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     {name:'open_website', description:'Open any web page in a new window.', input_schema:{type:'object', properties:{url:{type:'string'}}, required:['url']}},
     {name:'show_chart', description:'Show a big chart inside Spikey\'s own screen. Use names like NAS100, US30, SPX500, GOLD, BTC, OIL, DXY.', input_schema:{type:'object', properties:{symbol:{type:'string'}}, required:['symbol']}},
     {name:'show_slide', description:'Show one of Spikey\'s visual slides on the center screen: fuel (protein, calories, meals), trading (week P&L, discipline), money (accounts, food budget, spending), habits (gym, reel, family, slips) or agenda (to-dos).', input_schema:{type:'object', properties:{slide:{type:'string', enum:['fuel','trading','money','habits','agenda']}}, required:['slide']}},
+    {name:'backtest', description:'Nick\'s backtesting session: open the replay chart on its own screen, log a backtest trade, get stats, undo the last trade, or end the session. Use for anything about backtesting or replay.', input_schema:{type:'object', properties:{action:{type:'string', enum:['open','open_das','log','summary','undo','end']}, direction:{type:'string', enum:['long','short']}, outcome:{type:'string', enum:['win','loss','breakeven']}, r:{type:'number', description:'R multiple, e.g. 2 for a 2R win'}}, required:['action']}},
     {name:'add_task', description:'Add an objective to Spikey\'s on-screen list.', input_schema:{type:'object', properties:{text:{type:'string'}}, required:['text']}},
     {name:'complete_task', description:'Mark one of Spikey\'s objectives done, by its number (1 = first).', input_schema:{type:'object', properties:{number:{type:'integer'}}, required:['number']}},
     {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. Use when he says log, journal, note, tell Cole, or describes his trades, food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
@@ -989,6 +995,15 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
           if (window.JV_setSymbol) window.JV_setSymbol(s); return 'Chart is up.';
         }
         case 'show_slide': return window.JV_slides && window.JV_slides.show(input.slide) ? 'Showing it.' : 'Slides are not available.';
+        case 'backtest': {
+          const B = window.JV_backtest; if (!B) return 'Backtest mode is not available.';
+          if (input.action === 'open') return B.open('tv').message;
+          if (input.action === 'open_das') return B.open('das').message;
+          if (input.action === 'log') return B.logTrade({dir:input.direction, outcome:input.outcome || 'win', r:input.r});
+          if (input.action === 'undo') return B.undo();
+          if (input.action === 'end') return B.end();
+          return B.summary();
+        }
         case 'add_task': window.JV_tasks.add(input.text); return 'Added.';
         case 'complete_task': return window.JV_tasks.complete(input.number);
         case 'log_to_cole': return (await window.JV_coleLog(input.text, askJSON)).message;
@@ -1005,7 +1020,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
 Your replies are SPOKEN ALOUD. Keep them to 1 to 3 short sentences, casual and direct, no markdown, no lists, no emojis, never read out URLs. Say numbers naturally.
 Use your tools to act: play music on Spotify, open YouTube, TradingView or websites, show charts, manage objectives, log things into Cole, and look up his trading week and to-dos. Use web_search for anything current (news, prices, scores, weather elsewhere, facts you are unsure of).
 Never give specific trade calls or financial advice. If he's clearly about to break a trading rule, remind him.
-Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', weekday:'long', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'})} Eastern time, and he is in Miami.`;
+${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is running right now: ' + window.JV_backtest.summary() + ' Short replies like "long win 2R" or "loss" are backtest trades to log.\n' : ''}Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', weekday:'long', month:'long', day:'numeric', hour:'numeric', minute:'2-digit'})} Eastern time, and he is in Miami.`;
   }
 
   async function ask(text, opts){
@@ -1268,6 +1283,7 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
   if ('speechSynthesis' in window){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 
   let talkTimer = null, lastSpokeEnd = 0;
+  window.JV_say = t => say(t);
   function say(text){
     set('reply', text);
     return new Promise(res => {
@@ -1352,7 +1368,7 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
 
   const IGNORED = {ignored:true};
   async function handle(raw, opts){
-    const clean = raw.replace(/[.,!?]/g,'').trim();
+    const clean = raw.replace(/(?<!\d)\.|\.(?!\d)|[,!?]/g,'').trim();   // keep decimals like 1.5
     const text = clean.toLowerCase();
     if (!text) return;
     if (!(opts && opts.followup)) set('reply', '');
@@ -1413,6 +1429,26 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
     if (/^(show|open|pull up|bring up|expand)( me)?( the| my)? (big |full )?chart$/.test(text)){
       if (window.JV_bigChart) window.JV_bigChart(true);
       return say('Chart is up.');
+    }
+    // --- backtesting ---
+    if (window.JV_backtest){
+      const B = window.JV_backtest;
+      if (/^(open|start|pull up|launch|bring up|begin)( my| the| a)? (backtest|backtesting|back test|back testing|replay)( screen| session| window)?$/.test(text)) return say(B.open('tv').message);
+      if (/^(open|start|pull up|launch)( my| the)? (das|dass|das replay|dast)( replay| screen)?$/.test(text)) return say(B.open('das').message);
+      if (/^(end|stop|finish|close|wrap up)( my| the)? (backtest|backtesting|back test|back testing)( session)?$/.test(text)) return say(B.end());
+      if (/^undo( the)?( last)? (backtest|back test)( trade)?$|^(scratch|delete) that( backtest)?$/.test(text) && B.active()) return say(B.undo());
+      if (/^(how('?s| is)( my)? (backtest|back test|backtesting)( going)?|(backtest|back test) (stats|summary|status|score))$/.test(text)) return say(B.summary());
+      let bm = text.match(/^(?:log )?(?:backtest|back test|bt|backtesting)\s+(.+)$/);
+      if (!bm && B.active() && /^(long|short|buy|sell)?\s*(win|winner|won|loss|loser|lost|stopped( out)?|breakeven|break even|be|scratch)\b/.test(text)) bm = [null, text];
+      if (bm){
+        const w = bm[1];
+        const nums = {one:1, two:2, too:2, to:2, three:3, four:4, for:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10, half:.5};
+        let r = null, mr = w.match(/(\d+(?:\.\d+)?)\s*(?:r|are|our|ar|rs|r's)\b/) || w.match(/(?:^|\s)(\d{1,2}(?:\.\d+)?)(?:\s|$)/);
+        if (mr && +mr[1] <= 20) r = +mr[1]; else { const mw = w.match(/\b(one|two|too|to|three|four|for|five|six|seven|eight|nine|ten|half)\s*(?:and a half\s*)?(?:r|are|our|ar)\b/); if (mw) r = nums[mw[1]] + (/and a half/.test(w) ? .5 : 0); }
+        const dir = (w.match(/\b(long|short|buy|sell)\b/) || [])[1] || '';
+        const outcome = (w.match(/\b(win|winner|won|loss|loser|lost|stopped|stop|breakeven|break even|be|scratch)\b/) || [])[1] || (r != null ? 'win' : '');
+        if (outcome) return say(B.logTrade({dir, outcome, r}));
+      }
     }
     // --- slides ---
     if (window.JV_slides){
@@ -1645,6 +1681,180 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
 
 </script>
 <script>
+/* ===== Backtest mode: a backtesting window on its own screen + a live session Spikey keeps score of ===== */
+(() => {
+  if (new URLSearchParams(location.search).get('screen') === 'side') return;
+  const LS = 'spikey.backtest.';
+  const get = (k, d) => { try{ const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); }catch{ return d; } };
+  const put = (k, v) => { try{ localStorage.setItem(LS + k, JSON.stringify(v)); }catch{} };
+  const $ = id => document.getElementById(id);
+  const pad = n => String(n).padStart(2, '0');
+  const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+  const DEFAULTS = {
+    tvUrl: 'https://www.tradingview.com/chart/?symbol=CBOT_MINI%3AMYM1%21',   // MYM; use Bar Replay on this chart
+    dasUrl: '',                                                                  // second backtest tool (DAS replay)
+    screen: null,                                                                // {label,left,top,width,height}
+    openOnDock: true,
+    breakEvery: 50                                                               // minutes between break reminders
+  };
+  const cfg = () => Object.assign({}, DEFAULTS, get('cfg', {}));
+  const saveCfg = c => put('cfg', Object.assign(cfg(), c));
+
+  // ---------- the window ----------
+  let win = null;
+  function features(){
+    const s = cfg().screen;
+    if (!s) return 'popup,width=1400,height=900';
+    return `popup,left=${s.left},top=${s.top},width=${s.width},height=${s.height}`;
+  }
+  function openWindow(which = 'tv', startSession = true){
+    const c = cfg(), url = which === 'das' ? c.dasUrl : c.tvUrl;
+    if (!url) return {ok:false, message:'There is no link saved for that backtest tool yet. Add it in Setup, Backtesting.'};
+    const name = 'spikeyBacktest_' + which;
+    // reuse the window if it's already open, so a running replay never gets reloaded
+    if (win && !win.closed && win.name === name){ try{ win.focus(); }catch{} if (startSession && !session()) start(); return {ok:true, message:'Your backtest screen is already up.' + (startSession && session() ? ' Session is running.' : '')}; }
+    let w = window.open('', name, features());
+    if (!w) return {ok:false, message:'Chrome blocked the backtest window.'};
+    let fresh = false;
+    try{ fresh = w.location.href === 'about:blank'; }catch{ fresh = false; }   // cross-origin = already showing the chart
+    if (fresh) w.location.href = url;
+    const s = c.screen;
+    if (s){ try{ w.moveTo(s.left, s.top); w.resizeTo(s.width, s.height); }catch{} }
+    win = w;
+    const started = startSession && !session(); if (started) start();
+    return {ok:true, message: (fresh ? `Backtest screen is up${s ? ' on ' + s.label : ''}.` : 'Your backtest screen is already up.') + (started ? ' Session timer started.' : '')};
+  }
+
+  // ---------- the session ----------
+  const session = () => get('session', null);
+  function start(){
+    const s = {started: Date.now(), trades: [], lastBreak: Date.now()};
+    put('session', s); render(); return s;
+  }
+  function stats(s = session()){
+    if (!s) return null;
+    const t = s.trades, n = t.length;
+    const wins = t.filter(x => x.r > 0).length, losses = t.filter(x => x.r < 0).length;
+    const totalR = t.reduce((a, x) => a + x.r, 0);
+    const winR = t.filter(x => x.r > 0).reduce((a, x) => a + x.r, 0), lossR = -t.filter(x => x.r < 0).reduce((a, x) => a + x.r, 0);
+    let streak = 0, best = 0; t.forEach(x => { streak = x.r > 0 ? streak + 1 : 0; best = Math.max(best, streak); });
+    const mins = Math.max(1, (Date.now() - s.started) / 60000);
+    return {n, wins, losses, be:n - wins - losses, winRate: n ? Math.round(100 * wins / n) : 0, totalR, avgR: n ? totalR / n : 0,
+      pf: lossR ? winR / lossR : (winR ? Infinity : 0), bestStreak: best, mins, perHour: n / (mins / 60),
+      longs: t.filter(x => x.dir === 'long').length, shorts: t.filter(x => x.dir === 'short').length};
+  }
+  function logTrade({dir, outcome, r, note}){
+    let s = session() || start();
+    let R = (r != null && r !== '' && !isNaN(+r)) ? Math.abs(+r) : null;
+    const o = String(outcome || '').toLowerCase();
+    let val;
+    if (/^(be|breakeven|break even|scratch)/.test(o)) val = 0;
+    else if (/^(loss|lose|lost|stop|stopped)/.test(o)) val = -(R == null ? 1 : R);
+    else val = (R == null ? 1 : R);
+    s.trades.push({dir: /short|sell/.test(String(dir)) ? 'short' : /long|buy/.test(String(dir)) ? 'long' : '', r: val, note: note || '', at: Date.now()});
+    put('session', s); render(); persist();
+    const st = stats(s);
+    const fmtR = v => (v > 0 ? '+' : '') + (+v.toFixed(2)) + ' R';
+    return `Logged ${val > 0 ? 'a win' : val < 0 ? 'a loss' : 'a breakeven'}, ${fmtR(val)}. ${st.n} trade${st.n === 1 ? '' : 's'}, ${st.winRate} percent wins, ${fmtR(st.totalR)} total.`;
+  }
+  function undo(){ const s = session(); if (!s || !s.trades.length) return 'Nothing to undo.'; s.trades.pop(); put('session', s); render(); persist(); return 'Removed the last backtest trade.'; }
+  function end(){
+    const s = session(); if (!s) return 'No backtest session is running.';
+    const st = stats(s);
+    const hist = get('history', []); hist.push({...s, ended: Date.now()}); put('history', hist.slice(-60));
+    put('session', null); persist(s); render();
+    const m = Math.round(st.mins);
+    return st.n ? `Session ended. ${st.n} trade${st.n === 1 ? '' : 's'} in ${m} minute${m === 1 ? '' : 's'}, ${st.winRate} percent wins, ${(st.totalR >= 0 ? 'plus ' : 'minus ') + Math.abs(+st.totalR.toFixed(2))} R, profit factor ${isFinite(st.pf) ? st.pf.toFixed(2) : 'perfect'}.` : 'Session ended. No trades logged.';
+  }
+  function summary(){
+    const st = stats();
+    if (!st) return 'No backtest running. Say open backtesting to start one.';
+    const m = Math.round(st.mins), mm = m + ' minute' + (m === 1 ? '' : 's');
+    if (!st.n) return `Backtesting for ${mm}, no trades logged yet.`;
+    return `${mm} in. ${st.n} trade${st.n === 1 ? '' : 's'}, ${st.winRate} percent wins, average ${st.avgR.toFixed(2)} R, ${(st.totalR >= 0 ? 'plus ' : 'minus ') + Math.abs(+st.totalR.toFixed(2))} R total, profit factor ${isFinite(st.pf) ? st.pf.toFixed(2) : 'perfect'}.`;
+  }
+  // save sessions into Cole too (so they're on the phone and survive a new browser)
+  async function persist(s = session()){
+    if (!s || !window.JV_coleSaveDoc) return;
+    try{ await window.JV_coleSaveDoc('backtest/' + keyOf(new Date(s.started)) + '-' + s.started, {...s, stats: stats(s)}); }catch{}
+  }
+
+  // ---------- break reminders ----------
+  setInterval(() => {
+    const s = session(); if (!s) return;
+    const every = (cfg().breakEvery || 50) * 60000;
+    if (Date.now() - (s.lastBreak || s.started) > every){
+      s.lastBreak = Date.now(); put('session', s);
+      if (window.JV_say) window.JV_say(`You've been backtesting ${Math.round((Date.now() - s.started) / 60000)} minutes. Take five, stand up, then get back to it.`);
+    }
+  }, 30000);
+
+  // ---------- on-screen badge + slide ----------
+  const css = document.createElement('style');
+  css.textContent = `
+  #btBadge{display:none;cursor:pointer;border:1px solid var(--a2);color:var(--a2);padding:6px 10px}
+  #btBadge.on{display:inline-flex}
+  .bt-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .bt-kpis div{border:1px solid var(--line);border-radius:10px;padding:12px}
+  .bt-kpis .k{font:500 10px var(--f-mono);letter-spacing:.24em;color:var(--mute);text-transform:uppercase}
+  .bt-kpis b{display:block;font:500 clamp(24px,2.2vw,36px) var(--f-display);color:var(--hi);margin-top:4px}
+  .bt-kpis b.up{color:var(--good)} .bt-kpis b.down{color:var(--red)}
+  .bt-curve{width:100%;height:140px;display:block;margin-top:8px}
+  .bt-row{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .bt-row i{font-style:normal;font:500 11px var(--f-mono);padding:4px 7px;border-radius:5px;background:rgba(255,255,255,.06);color:var(--mute)}
+  .bt-row i.w{background:rgba(61,255,143,.18);color:var(--good)} .bt-row i.l{background:rgba(255,34,51,.22);color:#ff8a95}`;
+  document.head.appendChild(css);
+  const badge = document.createElement('span'); badge.id = 'btBadge'; badge.className = 'chip';
+  const top = document.querySelector('.top'), state = $('stateLabel');
+  if (top && state) top.insertBefore(badge, state);
+  badge.onclick = () => window.JV_slides && window.JV_slides.show('backtest');
+  function render(){
+    const st = stats();
+    badge.classList.toggle('on', !!st);
+    if (st) badge.textContent = `BACKTEST ${Math.floor(st.mins / 60) ? Math.floor(st.mins / 60) + 'h ' : ''}${Math.round(st.mins % 60)}m · ${st.n} · ${(st.totalR >= 0 ? '+' : '') + st.totalR.toFixed(1)}R`;
+    window.dispatchEvent(new Event('backtest-update'));
+  }
+  setInterval(render, 30000); render();
+
+  function curve(t){
+    if (!t.length) return '<div style="color:var(--mute);margin-top:30px;text-align:center">Log trades by voice: “Spikey, backtest long win 2R”</div>';
+    let acc = 0; const pts = [0, ...t.map(x => acc += x.r)];
+    const mn = Math.min(0, ...pts), mx = Math.max(0.5, ...pts), W = 600, H = 140, sx = W / Math.max(1, pts.length - 1);
+    const y = v => H - 8 - (v - mn) / (mx - mn || 1) * (H - 16);
+    const path = pts.map((v, i) => (i ? 'L' : 'M') + (i * sx).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ');
+    return `<svg class="bt-curve" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="rgba(255,255,255,.15)" stroke-dasharray="4 6"/>
+      <path d="${path}" fill="none" stroke="${acc >= 0 ? 'var(--good)' : 'var(--red)'}" stroke-width="3" stroke-linejoin="round" style="filter:drop-shadow(0 0 6px ${acc >= 0 ? 'rgba(61,255,143,.5)' : 'rgba(255,34,51,.5)'})"/></svg>`;
+  }
+  window.JV_backtestSlide = () => {
+    const s = session(), st = stats(s);
+    const hist = get('history', []).slice(-5).reverse();
+    if (!s) return `<h2>BACKTEST <em>no session running</em></h2><div class="sgrid">
+      <div class="scard"><div class="k">Start</div><div class="big" style="font-size:28px;margin-top:10px">“Spikey, open backtesting”</div><p style="color:var(--mute);margin-top:10px;line-height:1.5">Opens your replay chart on its own screen and starts the session timer. Log each trade by voice: “backtest long win 2R”, “backtest short loss”, “undo backtest”.</p></div>
+      <div class="scard"><div class="k">Recent sessions</div><ul class="slist" style="margin-top:8px">${hist.length ? hist.map(h => { const x = stats(h); return `<li><span>${new Date(h.started).toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'})} · ${x.n} trades</span><span>${x.winRate}% · ${(x.totalR >= 0 ? '+' : '') + x.totalR.toFixed(1)}R</span></li>`; }).join('') : '<li class="none">No sessions yet</li>'}</ul></div></div>`;
+    const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+    return `<h2>BACKTEST <em>${Math.floor(st.mins / 60) ? Math.floor(st.mins / 60) + 'h ' : ''}${Math.round(st.mins % 60)}m${st.mins >= 10 ? ' · ' + st.perHour.toFixed(1) + ' trades/hr' : ''}</em></h2>
+      <div class="bt-kpis"><div><span class="k">Trades</span><b>${st.n}</b></div><div><span class="k">Win rate</span><b>${st.winRate}%</b></div>
+        <div><span class="k">Total R</span><b class="${cls(st.totalR)}">${(st.totalR >= 0 ? '+' : '') + st.totalR.toFixed(2)}</b></div><div><span class="k">Profit factor</span><b>${isFinite(st.pf) ? st.pf.toFixed(2) : '∞'}</b></div></div>
+      <div class="scard" style="flex:1"><div class="k">Equity curve (R) · avg ${st.avgR.toFixed(2)}R · best streak ${st.bestStreak} · ${st.longs}L / ${st.shorts}S</div>${curve(s.trades)}
+        <div class="bt-row">${s.trades.slice(-24).map(t => `<i class="${t.r > 0 ? 'w' : t.r < 0 ? 'l' : ''}">${t.dir ? t.dir[0].toUpperCase() : '·'} ${(t.r > 0 ? '+' : '') + t.r}R</i>`).join('')}</div></div>`;
+  };
+
+  // ---------- screen picker for Setup ----------
+  async function screens(){
+    if (!('getScreenDetails' in window)) return null;
+    const d = await window.getScreenDetails();
+    return d.screens.map(s => ({label:(s.isInternal ? 'Laptop' : (s.label || 'Screen')), left:s.availLeft, top:s.availTop, width:s.availWidth, height:s.availHeight, internal:s.isInternal, current:s === d.currentScreen}));
+  }
+
+  window.JV_backtest = {open:openWindow, start, end, logTrade, undo, summary, stats, cfg, saveCfg, screens, active:() => !!session()};
+
+  // open on dock (Spikey only launches on dock), after the opening announcement gets going
+  if (cfg().openOnDock && !/[?&](sptest|debug|selftest)/.test(location.search)) setTimeout(() => openWindow('tv', false), 8000);   // just the chart; the session starts when you say so or log a trade
+})();
+
+</script>
+<script>
 /* ===== Setup panel: Claude key, Spotify, Cole ===== */
 (() => {
   if (new URLSearchParams(location.search).get('screen') === 'side') return;
@@ -1715,6 +1925,18 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
         <input id="setSp" autocomplete="off" placeholder="${sp && sp.hasClientId() ? 'client ID saved' : 'Spotify Client ID'}">
         <div class="btns"><button class="go" id="spGo">CONNECT SPOTIFY</button></div>`}
       </section>
+      ${(() => { const B = window.JV_backtest; if (!B) return ''; const c = B.cfg(); return `
+      <section>
+        <h4>4 · Backtesting <em class="${c.screen ? 'ok' : ''}">${c.screen ? 'ON ' + c.screen.label.toUpperCase() + ' ✓' : 'PICK A SCREEN'}</em></h4>
+        <p>Spikey opens your replay chart on its own screen when you dock, or when you say “Spikey, open backtesting”. Chrome may ask to “manage windows on all your displays”: click Allow.</p>
+        <div class="btns" id="btScreens"><button id="btDetect">DETECT SCREENS</button></div>
+        <p style="margin-top:10px">TradingView chart (use Bar Replay on it):</p>
+        <input id="btTv" autocomplete="off" value="${c.tvUrl.replace(/"/g,'&quot;')}">
+        <p>DAS replay link (optional):</p>
+        <input id="btDas" autocomplete="off" placeholder="paste the web address you use for DAS replay" value="${(c.dasUrl || '').replace(/"/g,'&quot;')}">
+        <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:4px 0 10px"><input type="checkbox" id="btDock" style="width:auto;margin:0" ${c.openOnDock ? 'checked' : ''}> Open the backtest chart every time I dock</label>
+        <div class="btns"><button class="go" id="btSave">SAVE</button><button id="btTest">OPEN IT NOW</button></div>
+      </section>`; })()}
       <section>
         <h4>3 · Cole <em class="${coleOn ? 'ok' : ''}">${coleOn ? 'SIGNED IN ✓' : 'NOT SIGNED IN'}</em></h4>
         <p>${coleOn ? 'Spikey reads your trades and to-dos, and “log to Cole …” saves into the right sections.' : 'Sign in with your Cole email and password.'}</p>
@@ -1727,7 +1949,19 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
     if ($('copyRedir')) $('copyRedir').onclick = () => navigator.clipboard.writeText(sp.redirect).then(() => $('copyRedir').textContent = 'COPIED');
     if ($('spGo')) $('spGo').onclick = () => { const v = $('setSp').value.trim(); if (v) sp.setClientId(v); if (!sp.hasClientId()) return; sp.login(); };
     if ($('coleGoSetup')) $('coleGoSetup').onclick = () => { panel.classList.remove('show'); const s = $('coleState'); if (s) s.click(); };
-    panel.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => e.stopPropagation()));   // typing here isn't push-to-talk
+    panel.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => e.stopPropagation()));
+    const B = window.JV_backtest;
+    if (B && $('btDetect')){
+      $('btDetect').onclick = async () => {
+        let list = null; try{ list = await B.screens(); }catch(e){}
+        if (!list){ $('btDetect').textContent = 'NOT ALLOWED — CLICK ALLOW IN CHROME'; return; }
+        const cur = B.cfg().screen;
+        $('btScreens').innerHTML = list.map((sc, i) => `<button data-sc="${i}" class="${cur && cur.left === sc.left && cur.top === sc.top ? 'go' : ''}">${sc.label.toUpperCase()} · ${sc.width}×${sc.height}${sc.current ? ' (SPIKEY)' : ''}</button>`).join('');
+        $('btScreens').querySelectorAll('[data-sc]').forEach(b => b.onclick = () => { B.saveCfg({screen:list[+b.dataset.sc]}); draw(); });
+      };
+      $('btSave').onclick = () => { B.saveCfg({tvUrl:$('btTv').value.trim() || B.cfg().tvUrl, dasUrl:$('btDas').value.trim(), openOnDock:$('btDock').checked}); draw(); };
+      $('btTest').onclick = () => { $('btSave').onclick(); B.open('tv', false); };
+    }   // typing here isn't push-to-talk
   }
   btn.onclick = () => { draw(); panel.classList.add('show'); };
   setTimeout(draw, 1500);
@@ -1865,6 +2099,7 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
         <div class="scard"><div class="k">Last 7 days (gym · reel · family)</div><div class="dots7">${week.map(w => `<i class="${w.n >= 2 ? 'g' : w.n === 0 ? '' : 'g'}" style="opacity:${.35 + w.n * .22}">${w.lab}</i>`).join('')}</div></div>
         <div class="scard"><div class="k">Slips today</div><div class="big ${slips ? 'down' : 'up'}" style="margin-top:8px">${slips}</div><div style="color:var(--mute);margin-top:6px">${slips ? 'Reset. Next hour is a new start.' : 'Clean so far.'}</div></div></div>`;
     }},
+    {id:'backtest', name:'Backtest', html:() => window.JV_backtestSlide ? window.JV_backtestSlide() : null},
     {id:'agenda', name:'Agenda', html:() => {
       const cole = (window.JV_coleTodos && window.JV_coleTodos()) || [];
       const mine = (window.JV_tasks && window.JV_tasks.list()) || [];
@@ -1912,6 +2147,7 @@ Right now it is ${now.toLocaleString('en-US', {timeZone:'America/New_York', week
     resume(){ holdUntil = 0; go(idx + 1); }
   };
   addEventListener('keydown', e => { if (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return; if (e.key === 'ArrowRight') window.JV_slides.next(); if (e.key === 'ArrowLeft'){ go(idx - 1); holdUntil = Date.now() + 30000; } });
+  window.addEventListener('backtest-update', () => { const cur = host.querySelector('.slide.on'); if (cur && SLIDES[idx] && SLIDES[idx].id === 'backtest'){ cur.innerHTML = SLIDES[idx].html(); } });
   window.addEventListener('cole-update', () => { const cur = host.querySelector('.slide.on'); if (cur && idx){ const html = SLIDES[idx].html(); if (html){ cur.innerHTML = html; animateIn(cur); } } });
   go(0);
   holdUntil = Date.now() + 25000;          // let the opening play first
