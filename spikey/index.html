@@ -913,6 +913,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
   const REDIRECT = location.origin + location.pathname;          // e.g. https://nick1400-ux.github.io/cole/spikey/
   const SCOPES = 'user-read-playback-state user-modify-playback-state user-read-currently-playing';
   const $ = id => document.getElementById(id);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   async function login(){
@@ -938,17 +939,39 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     put('verifier', '');
     history.replaceState(null, '', location.pathname);
   }
-  async function token(){
-    if (!get('refresh') && !get('access')) return null;
-    if (Date.now() < +get('expires')) return get('access');
-    if (!get('refresh')) return null;
-    try{ await tokenRequest({grant_type:'refresh_token', refresh_token:get('refresh')}); return get('access'); }catch{ return null; }
+  // one refresh at a time: Spotify rotates the refresh token, so two refreshes racing each other
+  // (the now-playing poll + a voice command) used to knock the login out
+  let refreshing = null;
+  function refresh(){
+    if (!refreshing) refreshing = (async () => {
+      for (let i = 0; i < 3; i++){
+        try{ await tokenRequest({grant_type:'refresh_token', refresh_token:get('refresh')}); return get('access'); }
+        catch(e){ if (/token 400/.test(e.message)) break; await sleep(800 * (i + 1)); }   // 400 = refresh token dead; others are network blips
+      }
+      return null;
+    })().finally(() => { setTimeout(() => refreshing = null, 0); });
+    return refreshing;
   }
-  async function api(path, opts = {}){
-    const t = await token(); if (!t) throw new Error('not-connected');
-    const r = await fetch('https://api.spotify.com/v1' + path, {...opts, headers:{Authorization:'Bearer ' + t, 'Content-Type':'application/json', ...(opts.headers || {})}});
-    if (r.status === 204) return null;
-    const txt = await r.text(); const j = txt ? JSON.parse(txt) : null;
+  async function token(force){
+    if (!get('refresh') && !get('access')) return null;
+    if (!force && Date.now() < +get('expires')) return get('access');
+    if (!get('refresh')) return null;
+    return refresh();
+  }
+  async function api(path, opts = {}, attempt = 0){
+    const t = await token(); if (!t) throw Object.assign(new Error('The Spotify login expired. Say "reconnect Spotify" or reconnect it in Setup.'), {status:401, raw:'no token'});
+    let r;
+    try{ r = await fetch('https://api.spotify.com/v1' + path, {...opts, headers:{Authorization:'Bearer ' + t, 'Content-Type':'application/json', ...(opts.headers || {})}}); }
+    catch(e){                                                      // network blip / Spotify hiccup: try again
+      if (attempt < 2){ await sleep(700 * (attempt + 1)); return api(path, opts, attempt + 1); }
+      put('lastError', new Date().toLocaleTimeString() + ' · network ' + (e.message || e) + ' [' + path.split('?')[0] + ']');
+      throw Object.assign(new Error("I couldn't reach Spotify. Check the internet connection."), {raw:'network'});
+    }
+    if (r.status === 401 && attempt < 1){ await token(true); return api(path, opts, attempt + 1); }      // token went stale early
+    if ((r.status === 429 || r.status >= 500) && attempt < 2){ await sleep(+(r.headers.get('Retry-After') || 1) * 1000); return api(path, opts, attempt + 1); }
+    if (r.status === 204 || r.status === 202) return null;
+    const txt = await r.text(); let j = null;
+    try{ j = txt ? JSON.parse(txt) : null; }catch{ j = null; }    // Spotify sometimes answers player commands with non-JSON text
     if (!r.ok){
       const reason = (j && j.error && j.error.reason) || '', msg = (j && j.error && j.error.message) || '';
       const err = new Error(explain(r.status, reason, msg)); err.status = r.status; err.raw = `${r.status} ${reason} ${msg} [${(opts.method || 'GET')} ${path.split('?')[0]}]`;
@@ -967,7 +990,6 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     if (status === 403) return 'Spotify refused: ' + (msg || reason || 'forbidden') + '.';
     return 'Spotify error ' + status + ': ' + (msg || reason);
   }
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
   async function device(){
     let {devices} = await api('/me/player/devices');
     let d = devices.find(x => x.is_active) || devices.find(x => x.type === 'Computer') || devices[0];
@@ -1124,6 +1146,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
         case 'spotify_control':
           if (!(window.JV_spotify && window.JV_spotify.connected())) return 'Spotify is not connected in Setup.';
           await window.JV_spotify.control(input.action, input.value); return 'Done.';
+          // (errors fall through to the catch below with Spotify's exact reason)
         case 'open_youtube': return open('https://www.youtube.com/results?search_query=' + encodeURIComponent(input.query));
         case 'open_tradingview': return open('https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(input.symbol));
         case 'open_website': return open(/^https?:\/\//.test(input.url) ? input.url : 'https://' + input.url);
@@ -1181,7 +1204,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
         case 'forget_learned': return window.JV_learn ? window.JV_learn.forget(input.query) : 'Learning is not available.';
       }
       return 'Unknown tool.';
-    }catch(e){ return 'Failed. Tell Nick exactly this: ' + (e.message || e); }
+    }catch(e){ return 'Failed. Tell Nick exactly this reason, word for word, do not paraphrase it as a connection issue: ' + (e.message || e); }
   }
 
   function system(){
@@ -1745,8 +1768,13 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
       try{ return say((await window.JV_spotify.play(m[1], /\bplaylist\b/i.test(m[1]) ? 'playlist' : 'track')).message); }catch(e){ if (!brainOn) return say("Spotify didn't respond. " + (e.message || '')); }
     }
     if (window.JV_spotify && window.JV_spotify.connected()){
-      const sp = {pause:'pause', 'pause music':'pause', 'pause the music':'pause', stop:'pause', 'stop the music':'pause', resume:'resume', 'resume music':'resume', skip:'next', next:'next', 'next song':'next', 'skip this':'next', 'skip song':'next', 'previous song':'previous', 'go back':'previous', 'last song':'previous'}[text];
-      if (sp){ try{ await window.JV_spotify.control(sp); return; }catch(e){ return say("Spotify didn't respond."); } }
+      const t2 = text.replace(/\b(please|as well|too|again|for me|spikey|spiky|now)\b/g, '').replace(/\s+/g, ' ').trim();
+      const sp = /^(skip|next)( (it|this|that|this one|that one|the|this song|that song|song|track|this track))*$|^(play )?(the )?next (song|track|one)$/.test(t2) ? 'next'
+        : /^(pause|stop)( (it|the|this|that|music|song|track|spotify|the music|the song))*$/.test(t2) ? 'pause'
+        : /^(resume|unpause|keep playing|play)( (it|the|music|song|spotify|the music))*$/.test(t2) ? 'resume'
+        : /^((go )?back|previous|last|play the last|play the previous)( (song|track|one))?$|^(previous|last) (song|track)$/.test(t2) ? 'previous' : null;
+      if (sp){ try{ await window.JV_spotify.control(sp); return; }catch(e){ return say(e.message || "Spotify didn't respond."); } }
+      if (/^(reconnect|re connect|relink|log ?in to|connect) spotify$/.test(text)){ say('Reconnecting Spotify.'); setTimeout(() => window.JV_spotify.login().catch(() => {}), 1200); return; }
     }
     // --- websites: exact names open instantly ---
     if ((m = text.match(/^(?:open|launch|pull up|bring up|go to)\s+(?:the |my )?(.+)$/))){
@@ -2654,7 +2682,7 @@ HTML>>>`;
       </section>
       <section>
         <h4>2 · Spotify (Premium) <em class="${spOn ? 'ok' : ''}">${spOn ? 'CONNECTED ✓' : 'NOT CONNECTED'}</em></h4>
-        ${spOn ? `<p>Say “Spikey, play …”, “pause”, “skip”.</p><div class="btns"><button id="spOut">DISCONNECT</button></div>` : `
+        ${spOn ? `<p>Say “Spikey, play …”, “pause”, “skip”.</p>${sp.lastError() ? `<p style="color:var(--mute);font-size:12px">Last Spotify error: <code>${esc(sp.lastError())}</code></p>` : ''}<div class="btns"><button id="spRe" class="go">RECONNECT</button><button id="spOut">DISCONNECT</button></div>` : `
         <ol>
           <li>Open <code>developer.spotify.com/dashboard</code> and log in → <b>Create app</b>.</li>
           <li>Any name and description. <b>Redirect URI</b>: <code id="spRedir">${sp ? sp.redirect : ''}</code> <button id="copyRedir" style="padding:3px 8px">COPY</button></li>
@@ -2678,6 +2706,7 @@ HTML>>>`;
     $('setupClose').onclick = () => panel.classList.remove('show');
     $('saveKey').onclick = () => { const v = $('setKey').value.trim(); if (v){ brain.setKey(v); draw(); } };
     if ($('delKey')) $('delKey').onclick = () => { brain.setKey(''); draw(); };
+    if ($('spRe')) $('spRe').onclick = () => sp.login().catch(() => {});
     if ($('spOut')) $('spOut').onclick = () => { sp.disconnect(); draw(); location.reload(); };
     if ($('copyRedir')) $('copyRedir').onclick = () => navigator.clipboard.writeText(sp.redirect).then(() => $('copyRedir').textContent = 'COPIED');
     if ($('spGo')) $('spGo').onclick = () => { const v = $('setSp').value.trim(); if (v) sp.setClientId(v); if (!sp.hasClientId()) return; sp.login(); };
