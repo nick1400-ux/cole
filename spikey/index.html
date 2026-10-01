@@ -555,11 +555,47 @@ const FX = (() => {
 
 </script>
 <script>
+/* ===== Shared trading rules (editable in Cole's Trade tab, saved to Cole doc meta/rules, read live by Spikey) ===== */
+const COLE_RULES = (() => {
+  const DEFAULT = {maxTrades:2, winStart:'09:30', winEnd:'10:30', cooldown:15, evalCap:2, list:[
+    {id:'plan', text:'Entry came from my pre-market plan', spoken:'a trade off your plan', check:'false if off his plan or impulsive'},
+    {id:'size', text:'Size matched the plan (no oversizing)', spoken:'oversizing', check:'false if more contracts than planned or he says oversized'},
+    {id:'noRevenge', text:'Not a revenge trade', spoken:'a revenge trade', check:'false if he was trying to win back a loss'},
+    {id:'noFomo', text:'Not a FOMO chase', spoken:'a FOMO chase', check:'false if chasing'},
+    {id:'window', text:'Inside my trading window', spoken:'trading outside your window', check:'window'}], retired:{}};
+  const hhmm = v => /^\d{1,2}:\d{2}$/.test(String(v || '')) ? String(v).padStart(5, '0') : null;
+  const intIn = (v, lo, hi, d) => { const n = Math.round(+v); return isFinite(n) && n >= lo && n <= hi ? n : d; };
+  function normalize(x){
+    x = x && typeof x === 'object' ? x : {};
+    const list = (Array.isArray(x.list) ? x.list : DEFAULT.list).filter(r => r && r.id && String(r.text || '').trim()).slice(0, 15)
+      .map(r => ({id:String(r.id).slice(0, 40), text:String(r.text).trim().slice(0, 120), spoken:r.spoken ? String(r.spoken).slice(0, 80) : '', check:r.check ? String(r.check).slice(0, 160) : ''}));
+    return {maxTrades:intIn(x.maxTrades, 1, 20, 2), winStart:hhmm(x.winStart) || '09:30', winEnd:hhmm(x.winEnd) || '10:30',
+      cooldown:intIn(x.cooldown, 0, 240, 15), evalCap:intIn(x.evalCap, 0, 20, 2), list, retired:(x.retired && typeof x.retired === 'object') ? x.retired : {}, updated:x.updated || 0};
+  }
+  let cfg = normalize(DEFAULT); const subs = [];
+  const t12 = v => { const [h, m] = v.split(':').map(Number); return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM'); };
+  const short = v => { const [h, m] = v.split(':').map(Number); return (h % 12 || 12) + (m ? ':' + String(m).padStart(2, '0') : ''); };
+  const mins = v => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+  const winText = () => `${short(cfg.winStart)}–${short(cfg.winEnd)}`;
+  const text = r => r.id === 'window' ? `Inside the ${winText()} window` : r.text;
+  const spoken = r => r.id === 'window' ? `trading outside the ${t12(cfg.winStart)} to ${t12(cfg.winEnd)} window` : (r.spoken || 'breaking your rule: ' + r.text.toLowerCase());
+  const label = id => { const r = cfg.list.find(x => x.id === id); return r ? text(r) : (cfg.retired[id] || id); };
+  const spokenOf = id => { const r = cfg.list.find(x => x.id === id); return r ? spoken(r) : 'breaking your old rule: ' + String(cfg.retired[id] || id).toLowerCase(); };
+  const tradeClean = t => !!(t && t.rules && Object.keys(t.rules).length) && Object.values(t.rules).every(Boolean) && cfg.list.every(r => !(r.id in t.rules) || t.rules[r.id]);
+  const dayClean = trades => trades.length <= cfg.maxTrades && trades.every(tradeClean);
+  const summary = () => `max ${cfg.maxTrades} trade${cfg.maxTrades === 1 ? '' : 's'}/day, trade only ${winText()} ET${cfg.cooldown ? `, ${cfg.cooldown}-minute walk-away after a loss` : ''}; rules: ${cfg.list.map(text).join('; ')}`;
+  function set(x){ cfg = normalize(x); subs.forEach(f => { try { f(cfg); } catch(e){} }); return cfg; }
+  // a fresh id for a new rule
+  const newId = () => 'r' + Date.now().toString(36);
+  return {DEFAULT, get:() => cfg, set, normalize, onChange:f => subs.push(f), keys:() => cfg.list.map(r => r.id), list:() => cfg.list, text, spoken, label, spokenOf,
+    tradeClean, dayClean, summary, winText, t12, mins, newId};
+})();
+
 /* ===== Shared trade detector (same code lives in Cole app/index.html and Spikey's cole.js) =====
    Pulls REAL trades Nick says he took out of a brain-dump / voice note and writes them into
    today's Cole page (days/<date>.trades) — the same trade log Cole's Trade tab uses. */
 const COLE_TRADES = (() => {
-  const KEYS = ['plan','size','noRevenge','noFomo','window'];
+  const KEYS_ = () => COLE_RULES.keys();
   const PER_PT = {MYM:0.5, YM:5, MNQ:2, NQ:20, MGC:10, GC:100};   // $ per point per contract
   const CONTRACTS = Object.keys(PER_PT);
   const num = v => (v === null || v === undefined || v === '' || isNaN(+v)) ? '' : +v;
@@ -569,8 +605,8 @@ const COLE_TRADES = (() => {
     const now = new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/New_York'});
     const list = (existing || []).map(summary).join('; ') || 'none';
     return {
-      schema: `"trades":[{"existing":int|null,"contract":"MYM|YM|MNQ|NQ|MGC|GC","dir":"LONG|SHORT","qty":int,"pnl":number|null,"r":number|null,"note":string,"rules":{"plan":bool,"size":bool,"noRevenge":bool,"noFomo":bool,"window":bool}}]`,
-      rules: `trades: ONLY real trades he says he actually entered today on his live or funded account ("took a short", "got long 2 MYM", "entered at 42,100", "stopped out", "closed it for 40 points"). NOT backtests, replay or sim, NOT setups he watched, planned, wanted or almost took, NOT trades from other days. Trades already logged today: ${list}. If he's adding to one of those (closing it, its result, how it went), set existing to its # and fill only what he said; otherwise existing null. Never log the same trade twice. contract: Dow = YM (micro Dow = MYM), Nasdaq = NQ (micro Nasdaq = MNQ), gold = GC (micro gold = MGC); if he doesn't name the market, use the one in his plan, else MYM. dir from long/short/buy/sell, "" if he didn't say. qty: contracts, default 1. pnl: dollar result (negative for a loss) if he says it; if he gives points or ticks, pnl = points x qty x dollars per point (MYM $0.50, YM $5, MNQ $2, NQ $20, MGC $10, GC $100); null if unknown or still open. r: R multiple if he says it, else null. note: why he took it / what he felt, in his words. rules: true unless what he said shows it was broken: plan false if off his plan or impulsive (his plan today: ${plan ? '"' + String(plan).slice(0, 200) + '"' : 'none written'}); size false if more contracts than planned or he says oversized; noRevenge false if he was trying to win back a loss; noFomo false if chasing; window false if entered outside 9:30-10:30 ET (use the entry time he says, else now: ${now} ET). The trade itself goes in trades; only his mindset about it also goes in journal.`
+      schema: `"trades":[{"existing":int|null,"contract":"MYM|YM|MNQ|NQ|MGC|GC","dir":"LONG|SHORT","qty":int,"pnl":number|null,"r":number|null,"note":string,"rules":{${KEYS_().map(k => '"' + k + '":bool').join(',')}}}]`,
+      rules: `trades: ONLY real trades he says he actually entered today on his live or funded account ("took a short", "got long 2 MYM", "entered at 42,100", "stopped out", "closed it for 40 points"). NOT backtests, replay or sim, NOT setups he watched, planned, wanted or almost took, NOT trades from other days. Trades already logged today: ${list}. If he's adding to one of those (closing it, its result, how it went), set existing to its # and fill only what he said; otherwise existing null. Never log the same trade twice. contract: Dow = YM (micro Dow = MYM), Nasdaq = NQ (micro Nasdaq = MNQ), gold = GC (micro gold = MGC); if he doesn't name the market, use the one in his plan, else MYM. dir from long/short/buy/sell, "" if he didn't say. qty: contracts, default 1. pnl: dollar result (negative for a loss) if he says it; if he gives points or ticks, pnl = points x qty x dollars per point (MYM $0.50, YM $5, MNQ $2, NQ $20, MGC $10, GC $100); null if unknown or still open. r: R multiple if he says it, else null. note: why he took it / what he felt, in his words. rules (his own trading rules, one key each): true unless what he said shows it was broken. ${COLE_RULES.list().map(r => r.id === 'window' ? `${r.id} ("${COLE_RULES.text(r)}"): false if entered outside ${COLE_RULES.winText()} ET (use the entry time he says, else now: ${now} ET)` : `${r.id} ("${r.text}"): ${r.check && r.check !== 'window' ? r.check : 'false if what he said shows he broke it'}`).join('; ')}. His plan today: ${plan ? '"' + String(plan).slice(0, 200) + '"' : 'none written'}. He allows ${COLE_RULES.get().maxTrades} trade${COLE_RULES.get().maxTrades === 1 ? '' : 's'} a day. The trade itself goes in trades; only his mindset about it also goes in journal.`
     };
   }
   // validate the model's trades
@@ -582,7 +618,7 @@ const COLE_TRADES = (() => {
       const contract = CONTRACTS.includes(c) ? c : /NASDAQ|NAS|NQ/.test(c) ? (/MICRO|^M/.test(c) ? 'MNQ' : 'NQ') : /GOLD|GC/.test(c) ? (/MICRO|^M/.test(c) ? 'MGC' : 'GC') : /^YM$|DOW/.test(c) ? 'YM' : 'MYM';
       const d = String(t.dir || '').toUpperCase();
       const dir = /SHORT|SELL/.test(d) ? 'SHORT' : /LONG|BUY/.test(d) ? 'LONG' : '';
-      const rules = {}; KEYS.forEach(k => rules[k] = !(t.rules && t.rules[k] === false));
+      const rules = {}; KEYS_().forEach(k => rules[k] = !(t.rules && t.rules[k] === false));
       return {existing:ex, contract, dir, qty:Math.max(1, Math.round(+t.qty || 1)), pnl:num(t.pnl), r:num(t.r), note:String(t.note || '').slice(0, 300), rules};
     }).filter(t => t.existing !== null || t.dir || t.pnl !== '' || t.r !== '' || t.note);   // drop empty junk
   }
@@ -597,7 +633,7 @@ const COLE_TRADES = (() => {
         if (t.pnl !== '') tr.pnl = t.pnl;
         if (t.r !== '') tr.r = t.r;
         if (t.note) tr.note = tr.note ? tr.note + ' · ' + t.note : t.note;
-        tr.rules = tr.rules || {}; KEYS.forEach(k => tr.rules[k] = tr.rules[k] !== false && t.rules[k]);
+        tr.rules = tr.rules || {}; KEYS_().forEach(k => tr.rules[k] = tr.rules[k] !== false && t.rules[k]);
         done.push({...tr, updated:true});
       } else {
         tr = {contract:t.contract, dir:t.dir, qty:t.qty, pnl:t.pnl, r:t.r, note:t.note, rules:t.rules, at, via};
@@ -607,8 +643,8 @@ const COLE_TRADES = (() => {
     });
     return done;
   }
-  const broken = t => KEYS.filter(k => !(t.rules && t.rules[k]));
-  return {KEYS, CONTRACTS, PER_PT, prompt, clean, apply, broken, summary};
+  const broken = t => Object.keys((t && t.rules) || {}).filter(k => !t.rules[k]).concat(t && t.rules && Object.keys(t.rules).length ? [] : KEYS_());
+  return {KEYS:KEYS_, CONTRACTS, PER_PT, prompt, clean, apply, broken, summary};
 })();
 
 /* ===== Cole link: weekly P&L from Cole's Supabase (read-only) ===== */
@@ -617,17 +653,17 @@ const COLE_TRADES = (() => {
   // Cole's own sync connection (Nick approved Spikey reusing it). Read-only; he signs in with his Cole login.
   const SB_URL = 'https://ntuzsyfzgfgxkmyqniqz.supabase.co';
   const SB_KEY = 'sb_publishable_RxVn21A1NCVsMlCh03cvHw_vnBxCP2q';
-  const RULES = ['plan', 'size', 'noRevenge', 'noFomo', 'window'];      // Cole's 5 trading rules
+  const MAXT = () => COLE_RULES.get().maxTrades;      // Nick's own rules, edited in Cole (meta/rules)
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, '0');
   const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   const money = n => (n > 0 ? '+' : n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
   const fmtR = n => { n = Math.round(n * 100) / 100; return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n) + 'R'; };
   const speakMoney = n => '$' + Math.abs(Math.round(n)).toLocaleString();
-  const tradeClean = t => RULES.every(k => t.rules && t.rules[k]);
-  const dayClean = trades => trades.length <= 2 && trades.every(tradeClean);
+  const tradeClean = t => COLE_RULES.tradeClean(t);
+  const dayClean = trades => COLE_RULES.dayClean(trades);
   let sb = null, uid = null, week = null, todos = [], todoRefs = [];
-  const RULE_SPOKEN = {plan:'a trade off your plan', size:'oversizing', noRevenge:'a revenge trade', noFomo:'a FOMO chase', window:'trading outside the nine thirty to ten thirty window'};
+  const RULE_SPOKEN = new Proxy({}, {get:(o, k) => COLE_RULES.spokenOf(k)});
   const andList = a => a.length === 1 ? a[0] : a.slice(0, -1).join(', ') + ', and ' + a[a.length - 1];
   const DAY_SPOKEN = {MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday'};
   let readyResolve; window.JV_coleReady = new Promise(r => readyResolve = r);
@@ -680,13 +716,13 @@ const COLE_TRADES = (() => {
       return `<div class="pb ${d.today ? 'today' : ''} ${state}" title="${d.key}"><div class="col"><i class="${cls}" style="height:${h}%"></i></div><span>${d.trades.length ? fmtR(d.r) : '·'}</span><small>${d.label}</small></div>`;
     }).join('');
     const t = w.today || {trades:[], r:0};
-    $('pnlTodayTrades').textContent = `${t.trades.length}/2`;
+    $('pnlTodayTrades').textContent = `${t.trades.length}/${MAXT()}`;
     $('pnlTodayAmt').textContent = fmtR(t.r || 0);
     $('pnlTodayAmt').style.color = t.r > 0 ? 'var(--good)' : t.r < 0 ? 'var(--red)' : '';
   }
   window.JV_renderPnl = rows => render(compute(rows));      // also used by tests
   // ---- write to Cole: sort what Nick said (same rules as Cole) and save it into today's page ----
-  const SORT_PROMPT = (txt, tb) => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
+  const SORT_PROMPT = (txt, tb) => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) (his trading rules: ${COLE_RULES.summary()}), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
 Split this voice brain-dump into sectors. Keep his own words, lightly cleaned up; never invent facts.
 Brain-dump: """${txt}"""
 Return JSON only:
@@ -738,7 +774,7 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
       const br = COLE_TRADES.broken(t).map(k => RULE_SPOKEN[k]);
       return `${t.updated ? 'updated your' : ''} ${String(t.dir).toLowerCase()} ${t.qty} ${t.contract}, ${res}${br.length ? ', rules broken: ' + andList(br) : ''}`.trim();
     };
-    const tradeMsg = logged.length ? `Logged in your trade log: ${logged.map(tradeSay).join('; ')}. That's ${d.trades.length} of 2 today. ` : '';
+    const tradeMsg = logged.length ? `Logged in your trade log: ${logged.map(tradeSay).join('; ')}. That's ${d.trades.length} of ${MAXT()} today. ` : '';
     if (r.journal.length) parts.push(r.journal.length + ' journal');
     if (r.meals.length) parts.push(r.meals.length + ' meal' + (r.meals.length > 1 ? 's' : ''));
     if (r.ideas.length) parts.push(r.ideas.length + ' idea' + (r.ideas.length > 1 ? 's' : ''));
@@ -810,7 +846,7 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     Object.keys(days).sort().filter(k => (!from || k >= from) && (!to || k <= to)).forEach(k => {
       const d = days[k] || {}, o = {};
       if (want.includes('journal')) o.journal = (d.journal || []).filter(j => j && !j.hidden && j.text).map(j => (j.tag ? '[' + j.tag + '] ' : '') + j.text);
-      if (want.includes('trades')) o.trades = (d.trades || []).map(t => ({pnl:t.pnl, sym:t.sym || t.symbol, side:t.side || t.dir, note:t.note || t.notes, rulesBroken:RULES.filter(r => !(t.rules && t.rules[r]))}));
+      if (want.includes('trades')) o.trades = (d.trades || []).map(t => ({pnl:t.pnl, sym:t.sym || t.symbol, side:t.side || t.dir, note:t.note || t.notes, contract:t.contract, qty:t.qty, rulesBroken:COLE_TRADES.broken(t).map(COLE_RULES.label)}));
       if (want.includes('meals')) o.meals = (d.meals || []).map(m => `${m.name} (${m.kcal || 0} kcal, ${m.p || 0}g protein)`);
       if (want.includes('ideas')) o.ideas = (d.ideas || []).map(x => (x.area ? '[' + x.area + '] ' : '') + x.text);
       if (want.includes('spend')) o.spend = (d.spend || []).map(x => `${x.what} $${x.amt} (${x.cat})`);
@@ -831,9 +867,9 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     if (!w || !w.nTrades) return 'No trades logged in Cole this week yet.';
     const out = [w.total === 0 ? `This week you're flat across ${w.nTrades} trades.` : `This week you're ${signed(w.total)} across ${w.nTrades} trade${w.nTrades === 1 ? '' : 's'}.`];
     w.days.filter(d => d.trades.length).forEach(d => {
-      const broken = [...new Set(d.trades.flatMap(t => RULES.filter(k => !(t.rules && t.rules[k]))))].map(k => RULE_SPOKEN[k]);
-      const over = d.trades.length > 2;
-      const rule = d.clean ? 'rules followed.' : 'rules broken: ' + andList([...broken, ...(over ? ['going over the two-trade limit'] : [])]) + '.';
+      const broken = [...new Set(d.trades.flatMap(t => COLE_TRADES.broken(t)))].map(k => RULE_SPOKEN[k]);
+      const over = d.trades.length > MAXT();
+      const rule = d.clean ? 'rules followed.' : 'rules broken: ' + andList([...broken, ...(over ? [`going over your ${MAXT()}-trade limit`] : [])]) + '.';
       out.push(`${d.today ? 'Today' : DAY_SPOKEN[d.label]}, ${d.pnl === 0 ? 'flat' : signed(d.pnl)}, ${rule}`);
     });
     out.push(`You followed your rules on ${w.cleanDays} of ${w.tradedDays} trading day${w.tradedDays === 1 ? '' : 's'}.`);
@@ -852,14 +888,22 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     let s = dir === 'flat' ? `You're flat this week` : `You're ${dir} ${speakMoney(w.total)} this week`;
     s += ` across ${w.nTrades} trade${w.nTrades === 1 ? '' : 's'}, with ${w.cleanDays} of ${w.tradedDays} trading day${w.tradedDays === 1 ? '' : 's'} clean.`;
     const t = w.today;
-    if (t && t.trades.length) s += ` Today: ${t.trades.length} of 2 trades, ${t.pnl >= 0 ? 'up' : 'down'} ${speakMoney(t.pnl)}.`;
+    if (t && t.trades.length) s += ` Today: ${t.trades.length} of ${MAXT()} trades, ${t.pnl >= 0 ? 'up' : 'down'} ${speakMoney(t.pnl)}.`;
     return s;
   };
 
+  // Nick's trading rules live in Cole (meta/rules); he edits them on the fly in Cole's Trade tab
+  async function loadRules(){
+    if (!sb || !uid) return;
+    const {data} = await sb.from('cole_docs').select('data').eq('path', 'meta/rules').maybeSingle();
+    if (data && data.data){ COLE_RULES.set(data.data); window.JV_rules = COLE_RULES.get(); }
+  }
+  window.JV_rules = COLE_RULES.get();
   function state(text, on){ const e = $('coleState'); if (e){ e.textContent = text; e.classList.toggle('on', !!on); } }
 
   async function refresh(){
     if (!sb || !uid) return;
+    await loadRules().catch(() => {});
     const {data, error} = await sb.from('cole_docs').select('path,data').like('path', 'days/%');
     if (error){ state('COLE · OFFLINE'); readyResolve(); return; }
     render(compute(data));
@@ -875,6 +919,7 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
       .on('postgres_changes', {event:'*', schema:'public', table:'cole_docs', filter:'user_id=eq.' + uid}, p => {
         const path = (p.new && p.new.path) || (p.old && p.old.path) || '';
         if (path.startsWith('days/')) refresh();
+        else if (path === 'meta/rules') refresh();
       }).subscribe();
     setInterval(refresh, 5 * 60 * 1000);   // backup poll + picks up the new week on Monday
   }
@@ -1372,7 +1417,7 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
 
   function system(){
     const now = new Date();
-    return `You are Spikey, Nick's personal voice assistant, running on his laptop dashboard. Sledge B is his brand ("by outcasts for outcasts"). Nick is a Miami Mercedes-Benz technician who day trades futures: Dow (MYM/YM), Nasdaq (NQ/MNQ) and gold (GC/MGC) with strict rules (max 2 trades a day, no revenge trades, no oversizing, no FOMO, trade only 9:30 to 10:30 ET) and runs Sledge B events and content.
+    return `You are Spikey, Nick's personal voice assistant, running on his laptop dashboard. Sledge B is his brand ("by outcasts for outcasts"). Nick is a Miami Mercedes-Benz technician who day trades futures: Dow (MYM/YM), Nasdaq (NQ/MNQ) and gold (GC/MGC) with his own strict rules, which he edits in Cole (${COLE_RULES.summary()}) and runs Sledge B events and content.
 Personality: like J.A.R.V.I.S. from Iron Man: calm, sharp, loyal, quietly confident, with a dry wit used sparingly. Anticipate what he needs next and offer it in a few words. Never sycophantic.
 Your replies are SPOKEN ALOUD. Keep them to 1 to 3 short sentences, casual and direct, no markdown, no lists, no emojis, never read out URLs. Say numbers naturally.
 Cole is Nick's other app and you and Cole are ONE personal assistant with one shared memory: his Cole to-dos are your objectives, everything in Cole (journal, meals, trades, ideas, spending, habits) is yours, and everything you record (objectives, backtests, what you learn) goes into Cole. Never ask Nick to open Cole, sign in, share or give access to his data, and never ask permission to look; just read it with your tools and answer. When he asks for journal entries, use show_journal and give him all of them organized by category, not just one day or one type. Today's date is ${(d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'))(now)}.
@@ -2647,18 +2692,18 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
     try{ bt = {active: window.JV_backtest && window.JV_backtest.active() ? window.JV_backtest.stats() : null, sessions: JSON.parse(localStorage.getItem('spikey.backtest.history') || '[]').map(s => ({started:s.started, ended:s.ended, trades:s.trades}))}; }catch{}
     return {
       now: new Date().toISOString(), today: keyOf(new Date()), timezone: 'America/New_York',
-      targets: {kcal:2700, protein:150, carbs:350, fat:75, foodBudgetMonth:180, maxTradesPerDay:2, tradingWindow:'9:30-10:30 ET'},
-      tradeRules: ['plan','size','noRevenge','noFomo','window'],
+      targets: {kcal:2700, protein:150, carbs:350, fat:75, foodBudgetMonth:180, maxTradesPerDay:COLE_RULES.get().maxTrades, tradingWindow:COLE_RULES.winText() + ' ET'},
+      tradeRules: COLE_RULES.list().map(r => ({id:r.id, rule:COLE_RULES.text(r)})),
       days: out, objectives: (window.JV_tasks && window.JV_tasks.list()) || [], backtest: bt
     };
   }
   const SCHEMA = `window.SPIKEY_DATA = {
   now: ISO string, today: "YYYY-MM-DD", timezone,
   targets: {kcal, protein, carbs, fat, foodBudgetMonth, maxTradesPerDay, tradingWindow},
-  tradeRules: ["plan","size","noRevenge","noFomo","window"],
+  tradeRules: [{id, rule}],          // Nick's current rules (he edits them in Cole); a trade is clean when every value in its rules is true
   days: { "YYYY-MM-DD": {            // last 90 days from Cole, only days with data
       journal: [{tag: "trading"|"journal"|"family"|"business"|"fitness", text, at}],
-      trades: [{pnl: number, rules: {plan:bool,size:bool,noRevenge:bool,noFomo:bool,window:bool}, ...maybe sym, side, note}],
+      trades: [{pnl: number, rules: {<rule id>: bool, ...}, contract, dir, qty, r, note}],
       meals: [{name, kcal, p, c, f, cost}], spend: [{what, amt, cat}], ideas: [{area, text}],
       tasks: [{text, done}], gym: bool, reel: bool, family: bool, checkin: {sleep, mood, feel:[], plan}|null } },
   objectives: [string],              // open to-dos (same list as Cole)
@@ -2986,12 +3031,13 @@ HTML>>>`;
   function proactive(){
     const t = et(); if (window.JV && window.JV.mode === 'sleep') return;
     if (weekday()){
-      if (t.hm >= 9 * 60 + 25 && t.hm < 9 * 60 + 30) once('open5', () => {
+      const R = COLE_RULES.get(), ws = COLE_RULES.mins(R.winStart), we = COLE_RULES.mins(R.winEnd);
+      if (t.hm >= ws - 5 && t.hm < ws) once('open5', () => {
         const d = todayDoc(), ci = d.checkin;
-        alert('MARKET OPEN', `Market opens in five minutes. ${ci ? '' : "You haven't done your check-in yet. "}Max two trades, no revenge, no FOMO, out by ten thirty.`);
+        alert('TRADING WINDOW', `Your trading window opens in five minutes. ${ci ? '' : "You haven't done your check-in yet. "}Max ${R.maxTrades} trade${R.maxTrades > 1 ? 's' : ''}, ${R.list.filter(r => r.id !== 'window').slice(0, 3).map(r => COLE_RULES.text(r).replace(/\.$/, '')).join(', ').toLowerCase()}. Out by ${COLE_RULES.t12(R.winEnd)}.`);
       }, true);
-      if (t.hm >= 10 * 60 + 25 && t.hm < 10 * 60 + 30) once('close5', () => alert('WINDOW', 'Five minutes left in your trading window.'), true);
-      if (t.hm >= 10 * 60 + 30 && t.hm < 10 * 60 + 35) once('closed', () => alert('WINDOW CLOSED', "Trading window's closed. Hands off the keyboard. Good time to journal the session."), true);
+      if (t.hm >= we - 5 && t.hm < we) once('close5', () => alert('WINDOW', 'Five minutes left in your trading window.'), true);
+      if (t.hm >= we && t.hm < we + 5) once('closed', () => alert('WINDOW CLOSED', "Trading window's closed. Hands off the keyboard. Good time to journal the session."), true);
       (news && news.day === keyOf(new Date()) ? news.events : []).forEach(ev => {
         const [h, m] = String(ev.time || '').split(':').map(Number); if (isNaN(h)) return;
         const at = h * 60 + m;
@@ -3020,9 +3066,10 @@ HTML>>>`;
     const tr = todayTrades(), n = tr.length;
     if (lastTradeCount != null && n > lastTradeCount){
       const last = tr[n - 1], prev = tr[n - 2];
-      if (n === 2) alert('LIMIT', "That's two trades. You're done for the day. Protect the account.");
-      else if (n > 2) alert('OVER LIMIT', `That's trade number ${n}. You're over your two-trade limit. Step away from the charts.`);
-      else if (last && +last.pnl < 0) alert('LOSS', 'Loss logged. Take five minutes before anything else. No revenge.');
+      const R = COLE_RULES.get();
+      if (n === R.maxTrades) alert('LIMIT', `That's ${n} trade${n > 1 ? 's' : ''}. You're done for the day. Protect the account.`);
+      else if (n > R.maxTrades) alert('OVER LIMIT', `That's trade number ${n}. You're over your ${R.maxTrades}-trade limit. Step away from the charts.`);
+      else if (last && +last.pnl < 0) alert('LOSS', `Loss logged. ${R.cooldown ? `Walk away for ${R.cooldown} minutes before anything else.` : 'Reset before anything else.'} No revenge.`);
       if (prev && +prev.pnl < 0 && last && last.at && prev.at && last.at - prev.at < 10 * 60000) alert('REVENGE CHECK', 'That trade came within ten minutes of a loss. Was it on your plan?');
     }
     lastTradeCount = n;
@@ -3086,7 +3133,7 @@ HTML>>>`;
       if (window.JV_slides) window.JV_slides.show('trading', 60000);
       const d = todayDoc(); const n = (d.trades || []).length;
       const nws = await loadNews();
-      return `Market protocol. Music's paused and I'm going quiet except for the important stuff. ${n ? `You've taken ${n} of 2 trades.` : 'Zero of two trades so far.'} ${d.checkin ? '' : 'Do your check-in first. '}${newsSentence(nws)} Rules: plan only, no oversizing, no revenge, no FOMO, out by ten thirty.`;
+      return `Market protocol. Music's paused and I'm going quiet except for the important stuff. ${n ? `You've taken ${n} of ${COLE_RULES.get().maxTrades} trades.` : `Zero of ${COLE_RULES.get().maxTrades} trades so far.`} ${d.checkin ? '' : 'Do your check-in first. '}${newsSentence(nws)} Rules: ${COLE_RULES.list().filter(r => r.id !== 'window').map(r => COLE_RULES.text(r).replace(/\.$/, '')).join(', ').toLowerCase()}. Out by ${COLE_RULES.t12(COLE_RULES.get().winEnd)}.`;
     }},
     backtest: {names:/^(backtest|backtesting|replay|practice)( mode| protocol)$/, title:'Backtest protocol', steps: async () => {
       setFocus(true, 120);
@@ -3108,7 +3155,7 @@ HTML>>>`;
       const nws = await loadNews();
       const obj = (window.JV_tasks && window.JV_tasks.list()) || [];
       if (window.JV_slides) window.JV_slides.show('agenda', 60000);
-      return `Morning. ${newsSentence(nws)} ${obj.length ? `${obj.length} objective${obj.length > 1 ? 's' : ''} on deck. First up: ${obj[0]}.` : 'No open objectives.'} Market opens at nine thirty. Let's make shit happen.`;
+      return `Morning. ${newsSentence(nws)} ${obj.length ? `${obj.length} objective${obj.length > 1 ? 's' : ''} on deck. First up: ${obj[0]}.` : 'No open objectives.'} Your trading window opens at ${COLE_RULES.t12(COLE_RULES.get().winStart)}. Let's make shit happen.`;
     }}
   };
   async function protocol(text){
@@ -3396,7 +3443,9 @@ Examples:
   if (new URLSearchParams(location.search).get('screen') === 'side') return;
   const core = document.querySelector('.core'); if (!core) return;
   const TARGETS = {kcal:2700, p:150, c:350, f:75, foodMonth:180};
-  const RULES = ['plan','size','noRevenge','noFomo','window'];
+  const RC = () => (typeof COLE_RULES !== 'undefined' ? COLE_RULES.get() : {maxTrades:2});
+  const cleanDay = t => typeof COLE_RULES !== 'undefined' ? COLE_RULES.dayClean(t) : false;
+  const cleanTrade = t => typeof COLE_RULES !== 'undefined' ? COLE_RULES.tradeClean(t) : false;
   const pad = n => String(n).padStart(2, '0');
   const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   const esc = x => String(x == null ? '' : x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -3482,10 +3531,10 @@ Examples:
     {id:'trading', name:'Trading', html:() => {
       if (!linked()) return `<h2>TRADING <em>this week</em></h2><div class="sgrid">${notLinked('trading week')}</div>`;
       const D = days(), now = new Date(), mon = new Date(now); mon.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-      const wk = Array.from({length:5}, (_, i) => { const x = new Date(mon); x.setDate(mon.getDate() + i); const k = keyOf(x), t = (D[k] && D[k].trades) || []; return {lab:['MON','TUE','WED','THU','FRI'][i], t, pnl:sum(t,'r'), clean:t.length ? (t.length <= 2 && t.every(tr => RULES.every(r => tr.rules && tr.rules[r]))) : null}; });
+      const wk = Array.from({length:5}, (_, i) => { const x = new Date(mon); x.setDate(mon.getDate() + i); const k = keyOf(x), t = (D[k] && D[k].trades) || []; return {lab:['MON','TUE','WED','THU','FRI'][i], t, pnl:sum(t,'r'), clean:t.length ? cleanDay(t) : null}; });
       const tot = wk.reduce((s, x) => s + x.pnl, 0), max = Math.max(1, ...wk.map(x => Math.abs(x.pnl)));
       const traded = Object.keys(D).filter(k => (D[k].trades || []).length).sort();
-      const cleanOf = k => { const t = D[k].trades; return t.length <= 2 && t.every(tr => RULES.every(r => tr.rules && tr.rules[r])); };
+      const cleanOf = k => cleanDay(D[k].trades);
       const last10 = traded.slice(-10), disc = last10.length ? Math.round(100 * last10.filter(cleanOf).length / last10.length) : null;
       let streak = 0; for (const k of traded.slice().reverse()){ if (cleanOf(k)) streak++; else break; }
       const nT = ((today().trades) || []).length;
@@ -3496,8 +3545,8 @@ Examples:
           <div class="wbars">${wk.map(x => `<div><div class="c"><i class="${x.pnl >= 0 ? 'u' : 'd'}" data-h="${x.t.length ? Math.max(3, Math.abs(x.pnl) / max * 50) : 0}" style="height:0"></i></div><span style="color:var(--hi)">${x.t.length ? fR(x.pnl) : '·'}</span><span>${x.lab}${x.clean === true ? ' ✓' : x.clean === false ? ' ✕' : ''}</span></div>`).join('')}</div></div>
         <div class="scard"><div class="k">Discipline</div><div class="ring">${ringSvg(disc || 0, 100, 'fg', disc == null ? '—' : disc + '%', 'LAST 10 DAYS')}
           <div><div class="big" style="font-size:30px">${streak}</div><div style="color:var(--mute);margin-top:6px">clean days in a row</div>
-          <div class="big" style="font-size:30px;margin-top:14px">${nT}/2</div><div style="color:var(--mute);margin-top:6px">trades today</div></div></div></div>
-        <div class="scard" style="grid-column:1/-1"><div class="k">Trade log · latest</div><ul class="slist" style="margin-top:8px">${recent.length ? recent.map(({k, t}) => { const ok = RULES.every(r => t.rules && t.rules[r]), has = t.r !== '' && t.r !== undefined && t.r !== null; return `<li><span>${rLab(k)} · ${esc(t.dir || '?')} ${esc(t.qty || 1)} ${esc(t.contract || '')}${ok ? '' : ' <b style="color:var(--red)">✕ rule</b>'}</span><span style="color:${has ? (+t.r < 0 ? 'var(--red)' : 'var(--good)') : 'var(--mute)'}">${has ? fR(+t.r) : (t.pnl !== '' && t.pnl != null ? 'no R' : 'open')}</span></li>`; }).join('') : '<li class="none">No trades logged yet</li>'}</ul></div></div>`;
+          <div class="big" style="font-size:30px;margin-top:14px">${nT}/${RC().maxTrades}</div><div style="color:var(--mute);margin-top:6px">trades today</div></div></div></div>
+        <div class="scard" style="grid-column:1/-1"><div class="k">Trade log · latest</div><ul class="slist" style="margin-top:8px">${recent.length ? recent.map(({k, t}) => { const ok = cleanTrade(t), has = t.r !== '' && t.r !== undefined && t.r !== null; return `<li><span>${rLab(k)} · ${esc(t.dir || '?')} ${esc(t.qty || 1)} ${esc(t.contract || '')}${ok ? '' : ' <b style="color:var(--red)">✕ rule</b>'}</span><span style="color:${has ? (+t.r < 0 ? 'var(--red)' : 'var(--good)') : 'var(--mute)'}">${has ? fR(+t.r) : (t.pnl !== '' && t.pnl != null ? 'no R' : 'open')}</span></li>`; }).join('') : '<li class="none">No trades logged yet</li>'}</ul></div></div>`;
     }},
     {id:'money', name:'Money', html:() => {
       const fin = window.JV_finance;       // bank balances plug in here once a source is linked

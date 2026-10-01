@@ -49,18 +49,18 @@
     try{ bt = {active: window.JV_backtest && window.JV_backtest.active() ? window.JV_backtest.stats() : null, sessions: JSON.parse(localStorage.getItem('spikey.backtest.history') || '[]').map(s => ({started:s.started, ended:s.ended, trades:s.trades}))}; }catch{}
     return {
       now: new Date().toISOString(), today: keyOf(new Date()), timezone: 'America/New_York',
-      targets: {kcal:2700, protein:150, carbs:350, fat:75, foodBudgetMonth:180, maxTradesPerDay:2, tradingWindow:'9:30-10:30 ET'},
-      tradeRules: ['plan','size','noRevenge','noFomo','window'],
+      targets: {kcal:2700, protein:150, carbs:350, fat:75, foodBudgetMonth:180, maxTradesPerDay:COLE_RULES.get().maxTrades, tradingWindow:COLE_RULES.winText() + ' ET'},
+      tradeRules: COLE_RULES.list().map(r => ({id:r.id, rule:COLE_RULES.text(r)})),
       days: out, objectives: (window.JV_tasks && window.JV_tasks.list()) || [], backtest: bt
     };
   }
   const SCHEMA = `window.SPIKEY_DATA = {
   now: ISO string, today: "YYYY-MM-DD", timezone,
   targets: {kcal, protein, carbs, fat, foodBudgetMonth, maxTradesPerDay, tradingWindow},
-  tradeRules: ["plan","size","noRevenge","noFomo","window"],
+  tradeRules: [{id, rule}],          // Nick's current rules (he edits them in Cole); a trade is clean when every value in its rules is true
   days: { "YYYY-MM-DD": {            // last 90 days from Cole, only days with data
       journal: [{tag: "trading"|"journal"|"family"|"business"|"fitness", text, at}],
-      trades: [{pnl: number, rules: {plan:bool,size:bool,noRevenge:bool,noFomo:bool,window:bool}, ...maybe sym, side, note}],
+      trades: [{pnl: number, rules: {<rule id>: bool, ...}, contract, dir, qty, r, note}],
       meals: [{name, kcal, p, c, f, cost}], spend: [{what, amt, cat}], ideas: [{area, text}],
       tasks: [{text, done}], gym: bool, reel: bool, family: bool, checkin: {sleep, mood, feel:[], plan}|null } },
   objectives: [string],              // open to-dos (same list as Cole)

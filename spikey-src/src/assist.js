@@ -128,12 +128,13 @@
   function proactive(){
     const t = et(); if (window.JV && window.JV.mode === 'sleep') return;
     if (weekday()){
-      if (t.hm >= 9 * 60 + 25 && t.hm < 9 * 60 + 30) once('open5', () => {
+      const R = COLE_RULES.get(), ws = COLE_RULES.mins(R.winStart), we = COLE_RULES.mins(R.winEnd);
+      if (t.hm >= ws - 5 && t.hm < ws) once('open5', () => {
         const d = todayDoc(), ci = d.checkin;
-        alert('MARKET OPEN', `Market opens in five minutes. ${ci ? '' : "You haven't done your check-in yet. "}Max two trades, no revenge, no FOMO, out by ten thirty.`);
+        alert('TRADING WINDOW', `Your trading window opens in five minutes. ${ci ? '' : "You haven't done your check-in yet. "}Max ${R.maxTrades} trade${R.maxTrades > 1 ? 's' : ''}, ${R.list.filter(r => r.id !== 'window').slice(0, 3).map(r => COLE_RULES.text(r).replace(/\.$/, '')).join(', ').toLowerCase()}. Out by ${COLE_RULES.t12(R.winEnd)}.`);
       }, true);
-      if (t.hm >= 10 * 60 + 25 && t.hm < 10 * 60 + 30) once('close5', () => alert('WINDOW', 'Five minutes left in your trading window.'), true);
-      if (t.hm >= 10 * 60 + 30 && t.hm < 10 * 60 + 35) once('closed', () => alert('WINDOW CLOSED', "Trading window's closed. Hands off the keyboard. Good time to journal the session."), true);
+      if (t.hm >= we - 5 && t.hm < we) once('close5', () => alert('WINDOW', 'Five minutes left in your trading window.'), true);
+      if (t.hm >= we && t.hm < we + 5) once('closed', () => alert('WINDOW CLOSED', "Trading window's closed. Hands off the keyboard. Good time to journal the session."), true);
       (news && news.day === keyOf(new Date()) ? news.events : []).forEach(ev => {
         const [h, m] = String(ev.time || '').split(':').map(Number); if (isNaN(h)) return;
         const at = h * 60 + m;
@@ -162,9 +163,10 @@
     const tr = todayTrades(), n = tr.length;
     if (lastTradeCount != null && n > lastTradeCount){
       const last = tr[n - 1], prev = tr[n - 2];
-      if (n === 2) alert('LIMIT', "That's two trades. You're done for the day. Protect the account.");
-      else if (n > 2) alert('OVER LIMIT', `That's trade number ${n}. You're over your two-trade limit. Step away from the charts.`);
-      else if (last && +last.pnl < 0) alert('LOSS', 'Loss logged. Take five minutes before anything else. No revenge.');
+      const R = COLE_RULES.get();
+      if (n === R.maxTrades) alert('LIMIT', `That's ${n} trade${n > 1 ? 's' : ''}. You're done for the day. Protect the account.`);
+      else if (n > R.maxTrades) alert('OVER LIMIT', `That's trade number ${n}. You're over your ${R.maxTrades}-trade limit. Step away from the charts.`);
+      else if (last && +last.pnl < 0) alert('LOSS', `Loss logged. ${R.cooldown ? `Walk away for ${R.cooldown} minutes before anything else.` : 'Reset before anything else.'} No revenge.`);
       if (prev && +prev.pnl < 0 && last && last.at && prev.at && last.at - prev.at < 10 * 60000) alert('REVENGE CHECK', 'That trade came within ten minutes of a loss. Was it on your plan?');
     }
     lastTradeCount = n;
@@ -228,7 +230,7 @@
       if (window.JV_slides) window.JV_slides.show('trading', 60000);
       const d = todayDoc(); const n = (d.trades || []).length;
       const nws = await loadNews();
-      return `Market protocol. Music's paused and I'm going quiet except for the important stuff. ${n ? `You've taken ${n} of 2 trades.` : 'Zero of two trades so far.'} ${d.checkin ? '' : 'Do your check-in first. '}${newsSentence(nws)} Rules: plan only, no oversizing, no revenge, no FOMO, out by ten thirty.`;
+      return `Market protocol. Music's paused and I'm going quiet except for the important stuff. ${n ? `You've taken ${n} of ${COLE_RULES.get().maxTrades} trades.` : `Zero of ${COLE_RULES.get().maxTrades} trades so far.`} ${d.checkin ? '' : 'Do your check-in first. '}${newsSentence(nws)} Rules: ${COLE_RULES.list().filter(r => r.id !== 'window').map(r => COLE_RULES.text(r).replace(/\.$/, '')).join(', ').toLowerCase()}. Out by ${COLE_RULES.t12(COLE_RULES.get().winEnd)}.`;
     }},
     backtest: {names:/^(backtest|backtesting|replay|practice)( mode| protocol)$/, title:'Backtest protocol', steps: async () => {
       setFocus(true, 120);
@@ -250,7 +252,7 @@
       const nws = await loadNews();
       const obj = (window.JV_tasks && window.JV_tasks.list()) || [];
       if (window.JV_slides) window.JV_slides.show('agenda', 60000);
-      return `Morning. ${newsSentence(nws)} ${obj.length ? `${obj.length} objective${obj.length > 1 ? 's' : ''} on deck. First up: ${obj[0]}.` : 'No open objectives.'} Market opens at nine thirty. Let's make shit happen.`;
+      return `Morning. ${newsSentence(nws)} ${obj.length ? `${obj.length} objective${obj.length > 1 ? 's' : ''} on deck. First up: ${obj[0]}.` : 'No open objectives.'} Your trading window opens at ${COLE_RULES.t12(COLE_RULES.get().winStart)}. Let's make shit happen.`;
     }}
   };
   async function protocol(text){

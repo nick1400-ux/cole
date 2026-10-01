@@ -241,23 +241,109 @@ const PRESETS = [
   {name:"Turkey wrap + string cheese",kcal:450,p:35,c:35,f:18,cost:3},
   {name:"Greek yogurt + banana",kcal:250,p:20,c:38,f:3,cost:2},
 ];
-const RULES = [
-  ["plan","Entry came from my pre-market plan"],
-  ["size","Size matched the plan (no oversizing)"],
-  ["noRevenge","Not a revenge trade"],
-  ["noFomo","Not a FOMO chase"],
-  ["window","Inside the 9:30–10:30 window"],
-];
-const EVAL_CAP=2; // evaluations or resets per month
+/* ===== Shared trading rules (editable in Cole's Trade tab, saved to Cole doc meta/rules, read live by Spikey) ===== */
+const COLE_RULES = (() => {
+  const DEFAULT = {maxTrades:2, winStart:'09:30', winEnd:'10:30', cooldown:15, evalCap:2, list:[
+    {id:'plan', text:'Entry came from my pre-market plan', spoken:'a trade off your plan', check:'false if off his plan or impulsive'},
+    {id:'size', text:'Size matched the plan (no oversizing)', spoken:'oversizing', check:'false if more contracts than planned or he says oversized'},
+    {id:'noRevenge', text:'Not a revenge trade', spoken:'a revenge trade', check:'false if he was trying to win back a loss'},
+    {id:'noFomo', text:'Not a FOMO chase', spoken:'a FOMO chase', check:'false if chasing'},
+    {id:'window', text:'Inside my trading window', spoken:'trading outside your window', check:'window'}], retired:{}};
+  const hhmm = v => /^\d{1,2}:\d{2}$/.test(String(v || '')) ? String(v).padStart(5, '0') : null;
+  const intIn = (v, lo, hi, d) => { const n = Math.round(+v); return isFinite(n) && n >= lo && n <= hi ? n : d; };
+  function normalize(x){
+    x = x && typeof x === 'object' ? x : {};
+    const list = (Array.isArray(x.list) ? x.list : DEFAULT.list).filter(r => r && r.id && String(r.text || '').trim()).slice(0, 15)
+      .map(r => ({id:String(r.id).slice(0, 40), text:String(r.text).trim().slice(0, 120), spoken:r.spoken ? String(r.spoken).slice(0, 80) : '', check:r.check ? String(r.check).slice(0, 160) : ''}));
+    return {maxTrades:intIn(x.maxTrades, 1, 20, 2), winStart:hhmm(x.winStart) || '09:30', winEnd:hhmm(x.winEnd) || '10:30',
+      cooldown:intIn(x.cooldown, 0, 240, 15), evalCap:intIn(x.evalCap, 0, 20, 2), list, retired:(x.retired && typeof x.retired === 'object') ? x.retired : {}, updated:x.updated || 0};
+  }
+  let cfg = normalize(DEFAULT); const subs = [];
+  const t12 = v => { const [h, m] = v.split(':').map(Number); return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM'); };
+  const short = v => { const [h, m] = v.split(':').map(Number); return (h % 12 || 12) + (m ? ':' + String(m).padStart(2, '0') : ''); };
+  const mins = v => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+  const winText = () => `${short(cfg.winStart)}–${short(cfg.winEnd)}`;
+  const text = r => r.id === 'window' ? `Inside the ${winText()} window` : r.text;
+  const spoken = r => r.id === 'window' ? `trading outside the ${t12(cfg.winStart)} to ${t12(cfg.winEnd)} window` : (r.spoken || 'breaking your rule: ' + r.text.toLowerCase());
+  const label = id => { const r = cfg.list.find(x => x.id === id); return r ? text(r) : (cfg.retired[id] || id); };
+  const spokenOf = id => { const r = cfg.list.find(x => x.id === id); return r ? spoken(r) : 'breaking your old rule: ' + String(cfg.retired[id] || id).toLowerCase(); };
+  const tradeClean = t => !!(t && t.rules && Object.keys(t.rules).length) && Object.values(t.rules).every(Boolean) && cfg.list.every(r => !(r.id in t.rules) || t.rules[r.id]);
+  const dayClean = trades => trades.length <= cfg.maxTrades && trades.every(tradeClean);
+  const summary = () => `max ${cfg.maxTrades} trade${cfg.maxTrades === 1 ? '' : 's'}/day, trade only ${winText()} ET${cfg.cooldown ? `, ${cfg.cooldown}-minute walk-away after a loss` : ''}; rules: ${cfg.list.map(text).join('; ')}`;
+  function set(x){ cfg = normalize(x); subs.forEach(f => { try { f(cfg); } catch(e){} }); return cfg; }
+  // a fresh id for a new rule
+  const newId = () => 'r' + Date.now().toString(36);
+  return {DEFAULT, get:() => cfg, set, normalize, onChange:f => subs.push(f), keys:() => cfg.list.map(r => r.id), list:() => cfg.list, text, spoken, label, spokenOf,
+    tradeClean, dayClean, summary, winText, t12, mins, newId};
+})();
+
+/* ===== Shared trade detector (same code lives in Cole app/index.html and Spikey's cole.js) =====
+   Pulls REAL trades Nick says he took out of a brain-dump / voice note and writes them into
+   today's Cole page (days/<date>.trades) — the same trade log Cole's Trade tab uses. */
+const COLE_TRADES = (() => {
+  const KEYS_ = () => COLE_RULES.keys();
+  const PER_PT = {MYM:0.5, YM:5, MNQ:2, NQ:20, MGC:10, GC:100};   // $ per point per contract
+  const CONTRACTS = Object.keys(PER_PT);
+  const num = v => (v === null || v === undefined || v === '' || isNaN(+v)) ? '' : +v;
+  const summary = (t, i) => `#${i}: ${t.dir || '?'} ${t.qty || 1} ${t.contract || '?'}, result ${t.pnl !== '' && t.pnl !== undefined ? '$' + t.pnl : 'not logged yet'}${t.note ? ', "' + String(t.note).slice(0, 60) + '"' : ''}`;
+  // extra JSON field + rules appended to the sort prompt
+  function prompt(existing, plan){
+    const now = new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/New_York'});
+    const list = (existing || []).map(summary).join('; ') || 'none';
+    return {
+      schema: `"trades":[{"existing":int|null,"contract":"MYM|YM|MNQ|NQ|MGC|GC","dir":"LONG|SHORT","qty":int,"pnl":number|null,"r":number|null,"note":string,"rules":{${KEYS_().map(k => '"' + k + '":bool').join(',')}}}]`,
+      rules: `trades: ONLY real trades he says he actually entered today on his live or funded account ("took a short", "got long 2 MYM", "entered at 42,100", "stopped out", "closed it for 40 points"). NOT backtests, replay or sim, NOT setups he watched, planned, wanted or almost took, NOT trades from other days. Trades already logged today: ${list}. If he's adding to one of those (closing it, its result, how it went), set existing to its # and fill only what he said; otherwise existing null. Never log the same trade twice. contract: Dow = YM (micro Dow = MYM), Nasdaq = NQ (micro Nasdaq = MNQ), gold = GC (micro gold = MGC); if he doesn't name the market, use the one in his plan, else MYM. dir from long/short/buy/sell, "" if he didn't say. qty: contracts, default 1. pnl: dollar result (negative for a loss) if he says it; if he gives points or ticks, pnl = points x qty x dollars per point (MYM $0.50, YM $5, MNQ $2, NQ $20, MGC $10, GC $100); null if unknown or still open. r: R multiple if he says it, else null. note: why he took it / what he felt, in his words. rules (his own trading rules, one key each): true unless what he said shows it was broken. ${COLE_RULES.list().map(r => r.id === 'window' ? `${r.id} ("${COLE_RULES.text(r)}"): false if entered outside ${COLE_RULES.winText()} ET (use the entry time he says, else now: ${now} ET)` : `${r.id} ("${r.text}"): ${r.check && r.check !== 'window' ? r.check : 'false if what he said shows he broke it'}`).join('; ')}. His plan today: ${plan ? '"' + String(plan).slice(0, 200) + '"' : 'none written'}. He allows ${COLE_RULES.get().maxTrades} trade${COLE_RULES.get().maxTrades === 1 ? '' : 's'} a day. The trade itself goes in trades; only his mindset about it also goes in journal.`
+    };
+  }
+  // validate the model's trades
+  function clean(arr, existing){
+    const n = (existing || []).length;
+    return (Array.isArray(arr) ? arr : []).filter(t => t && typeof t === 'object').map(t => {
+      const ex = Number.isInteger(+t.existing) && t.existing !== null && t.existing !== '' && +t.existing >= 0 && +t.existing < n ? +t.existing : null;
+      const c = String(t.contract || '').toUpperCase().replace(/[^A-Z]/g, '');
+      const contract = CONTRACTS.includes(c) ? c : /NASDAQ|NAS|NQ/.test(c) ? (/MICRO|^M/.test(c) ? 'MNQ' : 'NQ') : /GOLD|GC/.test(c) ? (/MICRO|^M/.test(c) ? 'MGC' : 'GC') : /^YM$|DOW/.test(c) ? 'YM' : 'MYM';
+      const d = String(t.dir || '').toUpperCase();
+      const dir = /SHORT|SELL/.test(d) ? 'SHORT' : /LONG|BUY/.test(d) ? 'LONG' : '';
+      const rules = {}; KEYS_().forEach(k => rules[k] = !(t.rules && t.rules[k] === false));
+      return {existing:ex, contract, dir, qty:Math.max(1, Math.round(+t.qty || 1)), pnl:num(t.pnl), r:num(t.r), note:String(t.note || '').slice(0, 300), rules};
+    }).filter(t => t.existing !== null || t.dir || t.pnl !== '' || t.r !== '' || t.note);   // drop empty junk
+  }
+  // write into a Cole day doc
+  function apply(d, list, at, via){
+    if (!Array.isArray(d.trades)) d.trades = [];
+    const done = [];
+    list.forEach(t => {
+      let tr;
+      if (t.existing !== null && d.trades[t.existing]){
+        tr = d.trades[t.existing];
+        if (t.pnl !== '') tr.pnl = t.pnl;
+        if (t.r !== '') tr.r = t.r;
+        if (t.note) tr.note = tr.note ? tr.note + ' · ' + t.note : t.note;
+        tr.rules = tr.rules || {}; KEYS_().forEach(k => tr.rules[k] = tr.rules[k] !== false && t.rules[k]);
+        done.push({...tr, updated:true});
+      } else {
+        tr = {contract:t.contract, dir:t.dir, qty:t.qty, pnl:t.pnl, r:t.r, note:t.note, rules:t.rules, at, via};
+        d.trades.push(tr); done.push(tr);
+      }
+      if ((+tr.pnl || 0) < 0 || (+tr.r || 0) < 0) d.lossAt = at;
+    });
+    return done;
+  }
+  const broken = t => Object.keys((t && t.rules) || {}).filter(k => !t.rules[k]).concat(t && t.rules && Object.keys(t.rules).length ? [] : KEYS_());
+  return {KEYS:KEYS_, CONTRACTS, PER_PT, prompt, clean, apply, broken, summary};
+})();
+let RULES=[];function syncRules(){RULES=COLE_RULES.list().map(r=>[r.id,COLE_RULES.text(r)])}
+syncRules();COLE_RULES.onChange(syncRules);
+const RC=()=>COLE_RULES.get();
 const FIRMS=["Topstep","Alpha Futures","Other"];
 function evalsThisMonth(){const pre=TODAY.slice(0,7);const out=[];for(const k in days)if(k.startsWith(pre))(days[k].spend||[]).forEach(x=>{if(x.eval)out.push({...x,k})});return out}
 function evalCard(){
-  const ev=evalsThisMonth(),n=ev.length,amt=ev.reduce((t,x)=>t+(+x.amt||0),0),ds=discipline(10),over=n>=EVAL_CAP;
+  const ev=evalsThisMonth(),n=ev.length,amt=ev.reduce((t,x)=>t+(+x.amt||0),0),ds=discipline(10),over=n>=RC().evalCap;
   const firm=ui.firm||FIRMS[0];
   return `<div class="eyebrow">Evaluations &amp; resets this month</div>
   <div class="card gap">
-    <div class="row" style="justify-content:space-between;align-items:baseline"><span class="big" style="color:${over?"var(--bad)":"var(--ink)"}">${n}/${EVAL_CAP}</span><span class="mono" style="color:${amt>0?"var(--bad)":"var(--dim)"}">${money(amt)} spent</span></div>
-    ${over?`<div class="banner bad"><div><strong>Cap reached</strong>No more evals or resets this month. The next one gets earned with a discipline score of 80%+ (you're at ${ds==null?"—":ds+"%"}).</div></div>`:`<div class="muted">Cap: ${EVAL_CAP} a month. Your Discover history averages ~$240/mo on Topstep, Alpha Futures and TradingView.</div>`}
+    <div class="row" style="justify-content:space-between;align-items:baseline"><span class="big" style="color:${over?"var(--bad)":"var(--ink)"}">${n}/${RC().evalCap}</span><span class="mono" style="color:${amt>0?"var(--bad)":"var(--dim)"}">${money(amt)} spent</span></div>
+    ${over?`<div class="banner bad"><div><strong>Cap reached</strong>No more evals or resets this month. The next one gets earned with a discipline score of 80%+ (you're at ${ds==null?"—":ds+"%"}).</div></div>`:`<div class="muted">Cap: ${RC().evalCap} a month. Your Discover history averages ~$240/mo on Topstep, Alpha Futures and TradingView.</div>`}
     <div class="chips">${FIRMS.map(f=>`<button class="chip" data-firm="${f}" aria-pressed="${firm===f}">${f}</button>`).join("")}</div>
     <div class="row" style="flex-wrap:nowrap"><input type="number" id="evalAmt" inputmode="decimal" placeholder="Amount ($)"><button class="btn sm ${over?"ghost":""}" data-act="logEval">${over?"Log anyway":"Log purchase"}</button></div>
     ${ev.length?ev.map(x=>`<div class="item"><span>${esc(x.what)}</span><span class="m">${x.k.slice(5)} · ${money(+x.amt)}</span></div>`).join(""):""}
@@ -360,11 +446,11 @@ function setSync(t){document.getElementById("sync").textContent=t}
 const sum=(a,f)=>a.reduce((s,x)=>s+(+x[f]||0),0);
 function macros(k=TODAY){const m=day(k).meals;return{kcal:sum(m,"kcal"),p:sum(m,"p"),c:sum(m,"c"),f:sum(m,"f")}}
 function foodSpendMonth(){const pre=TODAY.slice(0,7);let t=0;for(const k in days)if(k.startsWith(pre))t+=sum(days[k].meals,"cost")+sum(days[k].spend.filter(s=>s.cat==="Food"),"amt");return t}
-function tradeClean(t){return RULES.every(([k])=>t.rules&&t.rules[k])}
-function dayClean(d){return d.trades.length<=2 && d.trades.every(tradeClean)}
+function tradeClean(t){return COLE_RULES.tradeClean(t)}
+function dayClean(d){return COLE_RULES.dayClean(d.trades)}
 function discipline(n){const ks=Object.keys(days).filter(k=>days[k].trades.length).sort().slice(-n);if(!ks.length)return null;return Math.round(100*ks.filter(k=>dayClean(days[k])).length/ks.length)}
 function streak(){let s=0;const ks=Object.keys(days).filter(k=>days[k].trades.length).sort().reverse();for(const k of ks){if(dayClean(days[k]))s++;else break}return s}
-function lossLeft(){const t=day().lossAt;if(!t)return 0;return Math.max(0,15*60-Math.floor((Date.now()-t)/1000))}
+function lossLeft(){const t=day().lossAt;if(!t)return 0;return Math.max(0,RC().cooldown*60-Math.floor((Date.now()-t)/1000))}
 const money=n=>"$"+(Math.round(n*100)/100).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:2});
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -384,8 +470,8 @@ function sched(dow){
     {id:"checkin",t:"06:45",title:"Check-in + trade plan",detail:"Sleep, mood, levels, size, max loss",go:"trade"},
     {id:"drive1",t:"07:00",title:"Drive to work",detail:"30 min · rehearse the plan, no charts",kind:"drive"},
     {id:"shop1",t:"07:30",title:"Mercedes shop",detail:"Flat-rate hours · film 1–2 BTS clips on breaks"},
-    {id:"trade",t:"09:30",title:"Trade window",detail:"2 trades max · brackets on · hard close 10:30",kind:"trade",go:"trade"},
-    {id:"shop2",t:"10:30",title:"Mercedes shop",detail:"Platform closed · lunch from the bag · post today's reel"},
+    {id:"trade",t:RC().winStart,title:"Trade window",detail:`${RC().maxTrades} trade${RC().maxTrades>1?"s":""} max · brackets on · hard close ${COLE_RULES.t12(RC().winEnd).replace(/ [AP]M/,"")}`,kind:"trade",go:"trade"},
+    {id:"shop2",t:RC().winEnd,title:"Mercedes shop",detail:"Platform closed · lunch from the bag · post today's reel"},
     {id:"drive2",t:"17:00",title:"Drive to Velocity",detail:"30 min",kind:"drive"},
     {id:"velo",t:"17:30",title:"Velocity: hit all 3",detail:"Any order. Lift and laptop are anchors; climb flexes.",kind:"head"},
     {id:"lift",t:"45m",title:dow===3?"Climb night with my brothers & sister":"Lift: "+lift,detail:dow===3?"Easy climbing · bring my little brothers & sister":"See Day tab for exercises",kind:"sub"},
@@ -450,7 +536,7 @@ function vToday(){
   let banners="";
   if(ll) banners+=`<div class="banner bad"><div><strong>Walk away: ${Math.floor(ll/60)}:${pad(ll%60)}</strong>You just took a loss. No new trade until the timer ends, and only from a plan level.</div></div>`;
   if(d.checkin&&d.checkin.mood<=4) banners+=`<div class="banner warn"><div><strong>Mood ${d.checkin.mood}/10: protect the account</strong>No trade today, or 1 micro max. The family needs you steady, not forcing it.</div></div>`;
-  if(nT>=2) banners+=`<div class="banner ice"><div><strong>2 of 2 trades done</strong>Platform closed. That's the job done for today.</div></div>`;
+  if(nT>=RC().maxTrades) banners+=`<div class="banner ice"><div><strong>${nT} of ${RC().maxTrades} trades done</strong>Platform closed. That's the job done for today.</div></div>`;
   const tasks=[
     ["reel",d.reel,"Post today's reel","Talking-to-camera or BTS",null],
     ["family",d.family,"Time with my brothers & sister","Even 15 minutes counts",null],
@@ -464,7 +550,7 @@ function vToday(){
   <div class="stats">
     ${statTile(`${m.p}<small style="font-size:12px"> g</small>`,"protein",m.p,TARGETS.p,barCls(m.p,TARGETS.p))}
     ${statTile(m.kcal.toLocaleString(),"calories",m.kcal,TARGETS.kcal,barCls(m.kcal,TARGETS.kcal))}
-    ${statTile(`${nT}/2`,"trades",nT,2,nT>2?"bad":"")}
+    ${statTile(`${nT}/${RC().maxTrades}`,"trades",nT,RC().maxTrades,nT>RC().maxTrades?"bad":"")}
     ${statTile(money(fm),"food / mo",fm,TARGETS.foodMonth,fm>TARGETS.foodMonth?"bad":fm>TARGETS.foodMonth*.8?"warn":"good")}
   </div>
   <div class="eyebrow">Beyond the schedule</div>
@@ -494,11 +580,11 @@ function vTrade(){
       <div class="row"><button class="btn" data-act="saveCheckin" ${ui.sleep&&ui.mood?"":"disabled"}>Save check-in</button></div>
       <button class="btn ghost" data-act="noTrade">Sitting out today</button>
     </div>`;
-  const locked = nT>=2 || ll>0;
+  const locked = nT>=RC().maxTrades || ll>0;
   const form = `
     <div class="card gap">
-      <div class="row" style="justify-content:space-between;align-items:center"><strong>Log a trade</strong><span class="pill ${nT>=2?"bad":""}">${nT}/2 today</span></div>
-      ${nT>=2?`<div class="banner bad"><div><strong>Limit reached</strong>You've taken 2 trades. Close the platform. Anything else is overtrading.</div></div>`:""}
+      <div class="row" style="justify-content:space-between;align-items:center"><strong>Log a trade</strong><span class="pill ${nT>=RC().maxTrades?"bad":""}">${nT}/${RC().maxTrades} today</span></div>
+      ${nT>=RC().maxTrades?`<div class="banner bad"><div><strong>Limit reached</strong>You've taken ${nT} trade${nT>1?"s":""}. Close the platform. Anything else is overtrading.</div></div>`:""}
       ${ll?`<div class="banner bad"><div><strong>Walk-away timer: ${Math.floor(ll/60)}:${pad(ll%60)}</strong>Next trade only from a plan level.</div></div>`:""}
       <div class="row">
         <div class="seg" style="flex:1 1 100%;flex-wrap:wrap" data-seg="contract">${["MYM","YM","MNQ","NQ","MGC","GC"].map(c=>`<button aria-pressed="${ui.contract===c}" data-v="${c}">${c}</button>`).join("")}</div>
@@ -511,7 +597,7 @@ function vTrade(){
       </div>
       <div class="rules">${RULES.map(([k,t])=>`<label class="rule"><input type="checkbox" id="r_${k}"> ${t}</label>`).join("")}</div>
       <label class="f">What did you feel entering?<input type="text" id="tNote" placeholder="One line, honest"></label>
-      <button class="btn" data-act="logTrade" ${locked?"disabled":""}>${nT>=2?"Done for today":ll?"Wait for the timer":"Log trade"}</button>
+      <button class="btn" data-act="logTrade" ${locked?"disabled":""}>${nT>=RC().maxTrades?"Done for today":ll?"Wait for the timer":"Log trade"}</button>
     </div>`;
   const list = d.trades.length?`<div class="card">${d.trades.map((t,i)=>`
     <div class="item"><div><strong>${t.dir||"?"} ${t.qty} ${t.contract}</strong> <span class="pill ${tradeClean(t)?"good":"bad"}">${tradeClean(t)?"clean":"rule broken"}</span>${t.note?`<div class="muted">${esc(t.note)}</div>`:""}</div>
@@ -523,6 +609,7 @@ function vTrade(){
   <div class="eyebrow">Before the bell</div>${checkin}
   ${d.journal.filter(j=>j.tag==="trading").length?`<div class="eyebrow">Mindset notes today</div><div class="gap">${d.journal.filter(j=>j.tag==="trading").map(j=>`<div class="entry"><div class="when">${new Date(j.at).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</div>${esc(j.text)}</div>`).join("")}</div>`:""}
   <div class="eyebrow">Session</div>${form}
+  ${rulesCard()}
   ${list?`<div class="eyebrow">Today's trades</div>${list}`:""}
   ${tradeLogCard()}
   <button class="task" data-act="openReview" style="margin-top:14px"><span class="chk">★</span><span><span class="t">Weekly review</span><br><span class="s">Discipline score, rules broken, headspace</span></span><span class="go">open ›</span></button>
@@ -653,8 +740,8 @@ function reviewData(){
   const tDays=D.filter(d=>d.trades.length),clean=tDays.filter(dayClean);
   const trades=D.flatMap(d=>d.trades);
   const cleanPnl=sum(clean.flatMap(d=>d.trades),"pnl"),dirtyPnl=sum(tDays.filter(d=>!dayClean(d)).flatMap(d=>d.trades),"pnl");
-  const broken={};RULES.forEach(([k,l])=>broken[l]=trades.filter(t=>!(t.rules&&t.rules[k])).length);
-  const overLimit=D.filter(d=>d.trades.length>2).length;
+  const broken={};trades.forEach(t=>{Object.keys(t.rules||{}).filter(k=>!t.rules[k]).forEach(k=>{const l=COLE_RULES.label(k);broken[l]=(broken[l]||0)+1})});
+  const overLimit=D.filter(d=>d.trades.length>RC().maxTrades).length;
   const feel={};D.forEach(d=>(d.checkin&&d.checkin.feel||[]).forEach(f=>feel[f]=(feel[f]||0)+1));
   const topFeel=Object.entries(feel).sort((a,b)=>b[1]-a[1]).slice(0,3);
   const gym=D.filter(d=>d.gym||(d.sched&&d.sched.lift)).length;
@@ -684,7 +771,7 @@ function vReview(){
   </div>
   <div class="eyebrow">Rules broken</div>
   <div class="card">${brokenList.length?brokenList.map(([l,n])=>`<div class="item"><span>${esc(l)}</span><span class="pill bad">${n}×</span></div>`).join(""):`<div class="muted">${r.trades?"None. Clean week.":"No trades logged this week."}</div>`}
-    ${r.overLimit?`<div class="item"><span>Went over 2 trades</span><span class="pill bad">${r.overLimit} day${r.overLimit>1?"s":""}</span></div>`:""}</div>
+    ${r.overLimit?`<div class="item"><span>Went over ${RC().maxTrades} trade${RC().maxTrades>1?"s":""}</span><span class="pill bad">${r.overLimit} day${r.overLimit>1?"s":""}</span></div>`:""}</div>
   <div class="eyebrow">Habits</div>
   <div class="card">${r.habWeek.length?r.habWeek.map(h=>`<div class="item"><span>${esc(h.name)}</span><span class="pill ${h.slips?"bad":"good"}">${h.slips?h.slips+" slips":"clean"} · ${h.clean} clean days</span></div>`).join(""):`<div class="muted">No habits tracked.</div>`}
     ${r.topTrig.length?`<div class="muted" style="margin-top:8px">Top triggers: ${r.topTrig.map(([t,n])=>esc(t)+" ("+n+")").join(" · ")}</div>`:""}</div>
@@ -712,7 +799,7 @@ async function coachReview(){
   ui.revBusy=true;ui.revErr="";render();
   try{
     const r=reviewData();
-    const out=await sample(`You are Cole, Nick's accountability coach. Nick is a Mercedes tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) with rules (max 2 trades/day, no revenge, no oversizing, no FOMO, trade only 9:30-10:30), is on a lean bulk, and wants to support his family through trading. Be direct and specific, no fluff, no trade picks or financial advice. Here is his week as JSON: ${JSON.stringify(r)}. Write 3 short parts: "The pattern:" (1-2 sentences), "What it cost:" (1-2 sentences using the numbers), "One fix for next week:" (one concrete action). If data is thin, say what to log more of.`,{modelTier:"default"});
+    const out=await sample(`You are Cole, Nick's accountability coach. Nick is a Mercedes tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) with his own trading rules (${COLE_RULES.summary()}), is on a lean bulk, and wants to support his family through trading. Be direct and specific, no fluff, no trade picks or financial advice. Here is his week as JSON: ${JSON.stringify(r)}. Write 3 short parts: "The pattern:" (1-2 sentences), "What it cost:" (1-2 sentences using the numbers), "One fix for next week:" (one concrete action). If data is thin, say what to log more of.`,{modelTier:"default"});
     ui.revText=out.text;
   }catch(e){ui.revErr=aiErr(e,"Couldn't get a read right now. Try again in a minute.")}
   ui.revBusy=false;render();
@@ -736,61 +823,42 @@ function pipelineCard(){
     ${posted.length?`<div class="muted">Recently posted: ${posted.map(r=>esc(r.title)).join(" · ")}</div>`:""}
   </div>`;
 }
-/* ===== Shared trade detector (same code lives in Cole app/index.html and Spikey's cole.js) =====
-   Pulls REAL trades Nick says he took out of a brain-dump / voice note and writes them into
-   today's Cole page (days/<date>.trades) — the same trade log Cole's Trade tab uses. */
-const COLE_TRADES = (() => {
-  const KEYS = ['plan','size','noRevenge','noFomo','window'];
-  const PER_PT = {MYM:0.5, YM:5, MNQ:2, NQ:20, MGC:10, GC:100};   // $ per point per contract
-  const CONTRACTS = Object.keys(PER_PT);
-  const num = v => (v === null || v === undefined || v === '' || isNaN(+v)) ? '' : +v;
-  const summary = (t, i) => `#${i}: ${t.dir || '?'} ${t.qty || 1} ${t.contract || '?'}, result ${t.pnl !== '' && t.pnl !== undefined ? '$' + t.pnl : 'not logged yet'}${t.note ? ', "' + String(t.note).slice(0, 60) + '"' : ''}`;
-  // extra JSON field + rules appended to the sort prompt
-  function prompt(existing, plan){
-    const now = new Date().toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit', timeZone:'America/New_York'});
-    const list = (existing || []).map(summary).join('; ') || 'none';
-    return {
-      schema: `"trades":[{"existing":int|null,"contract":"MYM|YM|MNQ|NQ|MGC|GC","dir":"LONG|SHORT","qty":int,"pnl":number|null,"r":number|null,"note":string,"rules":{"plan":bool,"size":bool,"noRevenge":bool,"noFomo":bool,"window":bool}}]`,
-      rules: `trades: ONLY real trades he says he actually entered today on his live or funded account ("took a short", "got long 2 MYM", "entered at 42,100", "stopped out", "closed it for 40 points"). NOT backtests, replay or sim, NOT setups he watched, planned, wanted or almost took, NOT trades from other days. Trades already logged today: ${list}. If he's adding to one of those (closing it, its result, how it went), set existing to its # and fill only what he said; otherwise existing null. Never log the same trade twice. contract: Dow = YM (micro Dow = MYM), Nasdaq = NQ (micro Nasdaq = MNQ), gold = GC (micro gold = MGC); if he doesn't name the market, use the one in his plan, else MYM. dir from long/short/buy/sell, "" if he didn't say. qty: contracts, default 1. pnl: dollar result (negative for a loss) if he says it; if he gives points or ticks, pnl = points x qty x dollars per point (MYM $0.50, YM $5, MNQ $2, NQ $20, MGC $10, GC $100); null if unknown or still open. r: R multiple if he says it, else null. note: why he took it / what he felt, in his words. rules: true unless what he said shows it was broken: plan false if off his plan or impulsive (his plan today: ${plan ? '"' + String(plan).slice(0, 200) + '"' : 'none written'}); size false if more contracts than planned or he says oversized; noRevenge false if he was trying to win back a loss; noFomo false if chasing; window false if entered outside 9:30-10:30 ET (use the entry time he says, else now: ${now} ET). The trade itself goes in trades; only his mindset about it also goes in journal.`
-    };
-  }
-  // validate the model's trades
-  function clean(arr, existing){
-    const n = (existing || []).length;
-    return (Array.isArray(arr) ? arr : []).filter(t => t && typeof t === 'object').map(t => {
-      const ex = Number.isInteger(+t.existing) && t.existing !== null && t.existing !== '' && +t.existing >= 0 && +t.existing < n ? +t.existing : null;
-      const c = String(t.contract || '').toUpperCase().replace(/[^A-Z]/g, '');
-      const contract = CONTRACTS.includes(c) ? c : /NASDAQ|NAS|NQ/.test(c) ? (/MICRO|^M/.test(c) ? 'MNQ' : 'NQ') : /GOLD|GC/.test(c) ? (/MICRO|^M/.test(c) ? 'MGC' : 'GC') : /^YM$|DOW/.test(c) ? 'YM' : 'MYM';
-      const d = String(t.dir || '').toUpperCase();
-      const dir = /SHORT|SELL/.test(d) ? 'SHORT' : /LONG|BUY/.test(d) ? 'LONG' : '';
-      const rules = {}; KEYS.forEach(k => rules[k] = !(t.rules && t.rules[k] === false));
-      return {existing:ex, contract, dir, qty:Math.max(1, Math.round(+t.qty || 1)), pnl:num(t.pnl), r:num(t.r), note:String(t.note || '').slice(0, 300), rules};
-    }).filter(t => t.existing !== null || t.dir || t.pnl !== '' || t.r !== '' || t.note);   // drop empty junk
-  }
-  // write into a Cole day doc
-  function apply(d, list, at, via){
-    if (!Array.isArray(d.trades)) d.trades = [];
-    const done = [];
-    list.forEach(t => {
-      let tr;
-      if (t.existing !== null && d.trades[t.existing]){
-        tr = d.trades[t.existing];
-        if (t.pnl !== '') tr.pnl = t.pnl;
-        if (t.r !== '') tr.r = t.r;
-        if (t.note) tr.note = tr.note ? tr.note + ' · ' + t.note : t.note;
-        tr.rules = tr.rules || {}; KEYS.forEach(k => tr.rules[k] = tr.rules[k] !== false && t.rules[k]);
-        done.push({...tr, updated:true});
-      } else {
-        tr = {contract:t.contract, dir:t.dir, qty:t.qty, pnl:t.pnl, r:t.r, note:t.note, rules:t.rules, at, via};
-        d.trades.push(tr); done.push(tr);
-      }
-      if ((+tr.pnl || 0) < 0 || (+tr.r || 0) < 0) d.lossAt = at;
-    });
-    return done;
-  }
-  const broken = t => KEYS.filter(k => !(t.rules && t.rules[k]));
-  return {KEYS, CONTRACTS, PER_PT, prompt, clean, apply, broken, summary};
-})();
+// ---- my trading rules: edit on the fly; saved to meta/rules so Spikey uses the same rules ----
+function loadRules(){try{const x=JSON.parse(localStorage.getItem("cole.rules")||"null");if(x)COLE_RULES.set(x)}catch(e){}}
+let rulesPending=Promise.resolve();
+function saveRules(){const body=JSON.parse(JSON.stringify(COLE_RULES.get()));try{localStorage.setItem("cole.rules",JSON.stringify(body))}catch(e){}
+  if(!db)return;rulesPending=rulesPending.then(()=>db.doc("meta/rules").set(body)).catch(e=>setSync("Couldn't save rules ("+e.code+")."))}
+function rulesDraftSync(){const d=ui.rulesDraft;if(!d)return;const v=id=>{const el=document.getElementById(id);return el?el.value:null};
+  [["maxTrades","rlMax"],["winStart","rlStart"],["winEnd","rlEnd"],["cooldown","rlCool"],["evalCap","rlEval"]].forEach(([k,id])=>{const x=v(id);if(x!==null&&x!=="")d[k]=k.startsWith("win")?x:+x});
+  d.list.forEach((r,i)=>{const x=v("rlText_"+i);if(x!==null&&r.id!=="window")r.text=x})}
+function rulesCard(){
+  const c=RC(),d=ui.rulesDraft;
+  if(!d) return `<div class="eyebrow">My rules</div>
+  <div class="card gap">
+    <div class="row" style="gap:6px;flex-wrap:wrap"><span class="pill">${c.maxTrades} trade${c.maxTrades>1?"s":""}/day</span><span class="pill">${COLE_RULES.winText()} window</span><span class="pill">${c.cooldown?c.cooldown+" min walk-away":"no walk-away timer"}</span><span class="pill">${c.evalCap} evals/resets a month</span></div>
+    <ol class="ex" style="margin:4px 0 0">${c.list.map(r=>`<li>${esc(COLE_RULES.text(r))}</li>`).join("")}</ol>
+    <button class="btn ghost" data-act="editRules">Edit my rules</button>
+  </div>`;
+  return `<div class="eyebrow">My rules · editing</div>
+  <div class="card gap">
+    <div class="row">
+      <label class="f">Max trades a day<input type="number" id="rlMax" inputmode="numeric" min="1" max="20" value="${d.maxTrades}"></label>
+      <label class="f">Walk-away after a loss (min)<input type="number" id="rlCool" inputmode="numeric" min="0" max="240" value="${d.cooldown}"></label>
+    </div>
+    <div class="row">
+      <label class="f">Window opens<input type="time" id="rlStart" value="${d.winStart}" style="color-scheme:dark"></label>
+      <label class="f">Window closes<input type="time" id="rlEnd" value="${d.winEnd}" style="color-scheme:dark"></label>
+      <label class="f">Evals/resets a month<input type="number" id="rlEval" inputmode="numeric" min="0" max="20" value="${d.evalCap}"></label>
+    </div>
+    <div class="muted">Rules you check on every trade</div>
+    ${d.list.map((r,i)=>`<div class="row" style="align-items:center;flex-wrap:nowrap">${r.id==="window"?`<div style="flex:1" class="muted">Inside my trading window (uses the times above)</div>`:`<input type="text" id="rlText_${i}" value="${esc(r.text)}" maxlength="120" style="flex:1">`}<button class="x" data-delrule="${i}" aria-label="Remove rule">×</button></div>`).join("")}
+    <div class="row" style="align-items:center;flex-wrap:nowrap"><input type="text" id="rlNew" placeholder="New rule, e.g. Waited for a 5-min close" maxlength="120" style="flex:1"><button class="btn sm" data-act="addRule">Add</button></div>
+    ${d.list.some(r=>r.id==="window")?"":`<button class="btn ghost sm" data-act="addWindowRule">Add the trading-window rule back</button>`}
+    ${ui.rulesErr?`<div class="muted" style="color:var(--warn)">${esc(ui.rulesErr)}</div>`:""}
+    <div class="row"><button class="btn" data-act="saveRules">Save rules</button><button class="btn ghost" data-act="cancelRules">Cancel</button></div>
+    <div class="muted" style="font-size:12px">Changes apply to new trades from now on. Past trades keep the rules they were logged with. Spikey picks up the change right away.</div>
+  </div>`;
+}
 // ---- full trade log: every trade from Cole, Spikey and voice notes, newest first ----
 function tradeLogCard(){
   const ks=Object.keys(days).filter(k=>k!==TODAY&&(days[k].trades||[]).length).sort().reverse();
@@ -861,7 +929,7 @@ async function sortDump(){
   ui.dumpBusy=true;ui.dumpErr="";ui.dumpRaw=txt;render();
   try{
     const d0=day(),tb=COLE_TRADES.prompt(d0.trades,d0.checkin&&d0.checkin.plan);
-    const out=await sample.json(`You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
+    const out=await sample.json(`You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) (his trading rules: ${COLE_RULES.summary()}), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
 Split this voice brain-dump into sectors. Keep his own words, lightly cleaned up; never invent facts.
 Brain-dump: """${txt}"""
 Return JSON only:
@@ -947,6 +1015,19 @@ document.getElementById("view").addEventListener("click",async e=>{
   if(t.dataset.delMeal){d.meals.splice(+t.dataset.delMeal,1);save();return render()}
   if(t.dataset.delOld){const [k,i]=t.dataset.delOld.split(":");if(days[k]&&confirm("Delete this trade from your log?")){days[k].trades.splice(+i,1);save(k)}return render()}
   if(t.dataset.act==="logAll"){ui.logAll=true;return render()}
+  if(t.dataset.delrule!==undefined){rulesDraftSync();const d=ui.rulesDraft;if(d){d.list.splice(+t.dataset.delrule,1);document.querySelectorAll('[id^="rlText_"]').forEach(el=>el.remove())}return render()}
+  if(t.dataset.act==="editRules"){ui.rulesDraft=JSON.parse(JSON.stringify(RC()));ui.rulesErr="";return render()}
+  if(t.dataset.act==="cancelRules"){ui.rulesDraft=null;ui.rulesErr="";return render()}
+  if(t.dataset.act==="addRule"){rulesDraftSync();const el=document.getElementById("rlNew"),v=el&&el.value.trim();if(!v)return;ui.rulesDraft.list.push({id:COLE_RULES.newId(),text:v.slice(0,120),spoken:"",check:""});el.value="";document.querySelectorAll('[id^="rlText_"]').forEach(x=>x.remove());return render()}
+  if(t.dataset.act==="addWindowRule"){rulesDraftSync();ui.rulesDraft.list.push(JSON.parse(JSON.stringify(COLE_RULES.DEFAULT.list.find(r=>r.id==="window"))));document.querySelectorAll('[id^="rlText_"]').forEach(x=>x.remove());return render()}
+  if(t.dataset.act==="saveRules"){rulesDraftSync();const d=ui.rulesDraft,nl=document.getElementById("rlNew");
+    if(nl&&nl.value.trim()){d.list.push({id:COLE_RULES.newId(),text:nl.value.trim().slice(0,120),spoken:"",check:""});nl.value=""}
+    d.list=d.list.filter(r=>r.id==="window"||String(r.text||"").trim());
+    if(COLE_RULES.mins(d.winEnd)<=COLE_RULES.mins(d.winStart)){ui.rulesErr="The window has to close after it opens.";return render()}
+    const old=RC(),retired=Object.assign({},old.retired||{});old.list.forEach(r=>{if(!d.list.some(x=>x.id===r.id))retired[r.id]=COLE_RULES.text(r)});
+    d.list.forEach(r=>{const o=old.list.find(x=>x.id===r.id);if(o&&o.text!==r.text&&r.id!=="window"){r.spoken="";r.check=""}});
+    COLE_RULES.set(Object.assign({},d,{retired,updated:Date.now()}));saveRules();ui.rulesDraft=null;ui.rulesErr="";
+    ["rlMax","rlCool","rlStart","rlEnd","rlEval"].forEach(id=>{const el=document.getElementById(id);el&&el.remove()});document.querySelectorAll('[id^="rlText_"]').forEach(x=>x.remove());return render()}
   if(t.dataset.delTrade){d.trades.splice(+t.dataset.delTrade,1);save();return render()}
   const a=t.dataset.act;
   if(a==="saveCheckin"){d.checkin={sleep:ui.sleep,mood:ui.mood,feel:ui.feel,plan:(document.getElementById("ciPlan")||{}).value||"",noTrade:false,at:Date.now()};save();render()}
@@ -1036,7 +1117,7 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="t"||e.key==="T"){ui.back=tab;go("dump");setTimeout(()=>{const d=document.getElementById("dumpText");d&&d.focus()},50);e.preventDefault()}
   else if(e.key==="r"||e.key==="R"){ui.back=tab;go("review");e.preventDefault()}
 });
-loadLocal(); loadPipe(); loadHabits(); loadLinks(); render();
+loadLocal(); loadPipe(); loadHabits(); loadLinks(); loadRules(); render();
 setInterval(()=>{ if(lossLeft()>0 || laptopLeft()>0 || keyOf(new Date())!==TODAY || new Date().getSeconds()===0) { if(!document.activeElement||!["INPUT","TEXTAREA"].includes(document.activeElement.tagName)) render() } },1000);
 const SB_URL="https://ntuzsyfzgfgxkmyqniqz.supabase.co", SB_KEY="sb_publishable_RxVn21A1NCVsMlCh03cvHw_vnBxCP2q";
 let sb=null, uid=null; const lastWrite={};
@@ -1073,6 +1154,7 @@ async function afterLogin(user){
   const had=await sb.from("cole_docs").select("path").limit(1);
   if(!had.error&&(!had.data||!had.data.length)){for(const k in days) save(k); savePipe(); saveHabits(); saveLinks();}
   db.doc("meta/links").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.list)){links=x;try{localStorage.setItem("cole.links",JSON.stringify(links))}catch(e){}render()}}else saveLinks()},()=>{});
+  db.doc("meta/rules").onSnapshot(x=>{if(x.exists){const r=JSON.parse(JSON.stringify(x.data()));if((r.updated||0)>=(RC().updated||0)){COLE_RULES.set(r);try{localStorage.setItem("cole.rules",JSON.stringify(RC()))}catch(e){}}else saveRules();const a=document.activeElement;if(!ui.rulesDraft&&(!a||!["INPUT","TEXTAREA"].includes(a.tagName)))render()}else if(RC().updated)saveRules()},()=>{});
   db.doc("meta/habits").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.list)){habits=x;try{localStorage.setItem("cole.habits",JSON.stringify(habits))}catch(e){}const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()}}else saveHabits()},()=>{});
   db.doc("meta/pipeline").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.reels)){pipe=x;try{localStorage.setItem("cole.pipe",JSON.stringify(pipe))}catch(e){}const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()}}},()=>{});
   db.collection("backtest").onSnapshot(sn=>{sn.docs.forEach(x=>{if(x.exists)spikeyBt[x.id]=JSON.parse(JSON.stringify(x.data()))});const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()},()=>{});

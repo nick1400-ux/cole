@@ -4,17 +4,17 @@
   // Cole's own sync connection (Nick approved Spikey reusing it). Read-only; he signs in with his Cole login.
   const SB_URL = 'https://ntuzsyfzgfgxkmyqniqz.supabase.co';
   const SB_KEY = 'sb_publishable_RxVn21A1NCVsMlCh03cvHw_vnBxCP2q';
-  const RULES = ['plan', 'size', 'noRevenge', 'noFomo', 'window'];      // Cole's 5 trading rules
+  const MAXT = () => COLE_RULES.get().maxTrades;      // Nick's own rules, edited in Cole (meta/rules)
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, '0');
   const keyOf = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   const money = n => (n > 0 ? '+' : n < 0 ? '−' : '') + '$' + Math.abs(Math.round(n)).toLocaleString();
   const fmtR = n => { n = Math.round(n * 100) / 100; return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n) + 'R'; };
   const speakMoney = n => '$' + Math.abs(Math.round(n)).toLocaleString();
-  const tradeClean = t => RULES.every(k => t.rules && t.rules[k]);
-  const dayClean = trades => trades.length <= 2 && trades.every(tradeClean);
+  const tradeClean = t => COLE_RULES.tradeClean(t);
+  const dayClean = trades => COLE_RULES.dayClean(trades);
   let sb = null, uid = null, week = null, todos = [], todoRefs = [];
-  const RULE_SPOKEN = {plan:'a trade off your plan', size:'oversizing', noRevenge:'a revenge trade', noFomo:'a FOMO chase', window:'trading outside the nine thirty to ten thirty window'};
+  const RULE_SPOKEN = new Proxy({}, {get:(o, k) => COLE_RULES.spokenOf(k)});
   const andList = a => a.length === 1 ? a[0] : a.slice(0, -1).join(', ') + ', and ' + a[a.length - 1];
   const DAY_SPOKEN = {MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday'};
   let readyResolve; window.JV_coleReady = new Promise(r => readyResolve = r);
@@ -67,13 +67,13 @@
       return `<div class="pb ${d.today ? 'today' : ''} ${state}" title="${d.key}"><div class="col"><i class="${cls}" style="height:${h}%"></i></div><span>${d.trades.length ? fmtR(d.r) : '·'}</span><small>${d.label}</small></div>`;
     }).join('');
     const t = w.today || {trades:[], r:0};
-    $('pnlTodayTrades').textContent = `${t.trades.length}/2`;
+    $('pnlTodayTrades').textContent = `${t.trades.length}/${MAXT()}`;
     $('pnlTodayAmt').textContent = fmtR(t.r || 0);
     $('pnlTodayAmt').style.color = t.r > 0 ? 'var(--good)' : t.r < 0 ? 'var(--red)' : '';
   }
   window.JV_renderPnl = rows => render(compute(rows));      // also used by tests
   // ---- write to Cole: sort what Nick said (same rules as Cole) and save it into today's page ----
-  const SORT_PROMPT = (txt, tb) => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) (rules: max 2 trades/day, no revenge, no oversizing, no FOMO, window 9:30-10:30), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
+  const SORT_PROMPT = (txt, tb) => `You are Cole, the personal assistant of Nick: a Miami Mercedes-Benz tech who day trades futures: Dow (YM/MYM), Nasdaq (NQ/MNQ) and gold (GC/MGC) (his trading rules: ${COLE_RULES.summary()}), is on a lean bulk (2700 kcal, 150g protein), runs Sledge B (his personal content brand, by outcasts for outcasts, which also covers his rave events and their behind-the-scenes), and wants more time with his younger siblings (his brothers and sister, not his children).
 Split this voice brain-dump into sectors. Keep his own words, lightly cleaned up; never invent facts.
 Brain-dump: """${txt}"""
 Return JSON only:
@@ -125,7 +125,7 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
       const br = COLE_TRADES.broken(t).map(k => RULE_SPOKEN[k]);
       return `${t.updated ? 'updated your' : ''} ${String(t.dir).toLowerCase()} ${t.qty} ${t.contract}, ${res}${br.length ? ', rules broken: ' + andList(br) : ''}`.trim();
     };
-    const tradeMsg = logged.length ? `Logged in your trade log: ${logged.map(tradeSay).join('; ')}. That's ${d.trades.length} of 2 today. ` : '';
+    const tradeMsg = logged.length ? `Logged in your trade log: ${logged.map(tradeSay).join('; ')}. That's ${d.trades.length} of ${MAXT()} today. ` : '';
     if (r.journal.length) parts.push(r.journal.length + ' journal');
     if (r.meals.length) parts.push(r.meals.length + ' meal' + (r.meals.length > 1 ? 's' : ''));
     if (r.ideas.length) parts.push(r.ideas.length + ' idea' + (r.ideas.length > 1 ? 's' : ''));
@@ -197,7 +197,7 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     Object.keys(days).sort().filter(k => (!from || k >= from) && (!to || k <= to)).forEach(k => {
       const d = days[k] || {}, o = {};
       if (want.includes('journal')) o.journal = (d.journal || []).filter(j => j && !j.hidden && j.text).map(j => (j.tag ? '[' + j.tag + '] ' : '') + j.text);
-      if (want.includes('trades')) o.trades = (d.trades || []).map(t => ({pnl:t.pnl, sym:t.sym || t.symbol, side:t.side || t.dir, note:t.note || t.notes, rulesBroken:RULES.filter(r => !(t.rules && t.rules[r]))}));
+      if (want.includes('trades')) o.trades = (d.trades || []).map(t => ({pnl:t.pnl, sym:t.sym || t.symbol, side:t.side || t.dir, note:t.note || t.notes, contract:t.contract, qty:t.qty, rulesBroken:COLE_TRADES.broken(t).map(COLE_RULES.label)}));
       if (want.includes('meals')) o.meals = (d.meals || []).map(m => `${m.name} (${m.kcal || 0} kcal, ${m.p || 0}g protein)`);
       if (want.includes('ideas')) o.ideas = (d.ideas || []).map(x => (x.area ? '[' + x.area + '] ' : '') + x.text);
       if (want.includes('spend')) o.spend = (d.spend || []).map(x => `${x.what} $${x.amt} (${x.cat})`);
@@ -218,9 +218,9 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     if (!w || !w.nTrades) return 'No trades logged in Cole this week yet.';
     const out = [w.total === 0 ? `This week you're flat across ${w.nTrades} trades.` : `This week you're ${signed(w.total)} across ${w.nTrades} trade${w.nTrades === 1 ? '' : 's'}.`];
     w.days.filter(d => d.trades.length).forEach(d => {
-      const broken = [...new Set(d.trades.flatMap(t => RULES.filter(k => !(t.rules && t.rules[k]))))].map(k => RULE_SPOKEN[k]);
-      const over = d.trades.length > 2;
-      const rule = d.clean ? 'rules followed.' : 'rules broken: ' + andList([...broken, ...(over ? ['going over the two-trade limit'] : [])]) + '.';
+      const broken = [...new Set(d.trades.flatMap(t => COLE_TRADES.broken(t)))].map(k => RULE_SPOKEN[k]);
+      const over = d.trades.length > MAXT();
+      const rule = d.clean ? 'rules followed.' : 'rules broken: ' + andList([...broken, ...(over ? [`going over your ${MAXT()}-trade limit`] : [])]) + '.';
       out.push(`${d.today ? 'Today' : DAY_SPOKEN[d.label]}, ${d.pnl === 0 ? 'flat' : signed(d.pnl)}, ${rule}`);
     });
     out.push(`You followed your rules on ${w.cleanDays} of ${w.tradedDays} trading day${w.tradedDays === 1 ? '' : 's'}.`);
@@ -239,14 +239,22 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
     let s = dir === 'flat' ? `You're flat this week` : `You're ${dir} ${speakMoney(w.total)} this week`;
     s += ` across ${w.nTrades} trade${w.nTrades === 1 ? '' : 's'}, with ${w.cleanDays} of ${w.tradedDays} trading day${w.tradedDays === 1 ? '' : 's'} clean.`;
     const t = w.today;
-    if (t && t.trades.length) s += ` Today: ${t.trades.length} of 2 trades, ${t.pnl >= 0 ? 'up' : 'down'} ${speakMoney(t.pnl)}.`;
+    if (t && t.trades.length) s += ` Today: ${t.trades.length} of ${MAXT()} trades, ${t.pnl >= 0 ? 'up' : 'down'} ${speakMoney(t.pnl)}.`;
     return s;
   };
 
+  // Nick's trading rules live in Cole (meta/rules); he edits them on the fly in Cole's Trade tab
+  async function loadRules(){
+    if (!sb || !uid) return;
+    const {data} = await sb.from('cole_docs').select('data').eq('path', 'meta/rules').maybeSingle();
+    if (data && data.data){ COLE_RULES.set(data.data); window.JV_rules = COLE_RULES.get(); }
+  }
+  window.JV_rules = COLE_RULES.get();
   function state(text, on){ const e = $('coleState'); if (e){ e.textContent = text; e.classList.toggle('on', !!on); } }
 
   async function refresh(){
     if (!sb || !uid) return;
+    await loadRules().catch(() => {});
     const {data, error} = await sb.from('cole_docs').select('path,data').like('path', 'days/%');
     if (error){ state('COLE · OFFLINE'); readyResolve(); return; }
     render(compute(data));
@@ -262,6 +270,7 @@ Rules: ${tb.rules} Trade mindset and emotions go in journal with tag "trading". 
       .on('postgres_changes', {event:'*', schema:'public', table:'cole_docs', filter:'user_id=eq.' + uid}, p => {
         const path = (p.new && p.new.path) || (p.old && p.old.path) || '';
         if (path.startsWith('days/')) refresh();
+        else if (path === 'meta/rules') refresh();
       }).subscribe();
     setInterval(refresh, 5 * 60 * 1000);   // backup poll + picks up the new week on Monday
   }
