@@ -28,6 +28,17 @@
 
   // ---------- the session ----------
   const session = () => get('session', null);
+  // a session left open when Spikey closed (or the laptop shut down) shouldn't haunt the next day:
+  // close it out if it's gone quiet (3h with no trades, or 6h since the last trade)
+  setTimeout(() => {
+    const s = session(); if (!s) return;
+    const last = s.trades.length ? Math.max(...s.trades.map(t => t.at || s.started)) : s.started;
+    const idleH = (Date.now() - last) / 3600e3;
+    if ((!s.trades.length && idleH > 3) || idleH > 6){
+      const hist = get('history', []); hist.push({...s, ended: last, autoEnded: true}); put('history', hist.slice(-60));
+      put('session', null); persist(s); shown = false; render();
+    }
+  }, 4000);
   function start(){
     const s = {started: Date.now(), trades: [], lastBreak: Date.now()};
     put('session', s); render(); return s;

@@ -18,6 +18,16 @@
 
   // ---------- timers, alarms, reminders ----------
   let items = get('items', []);                 // {id, kind:'timer'|'alarm'|'reminder', at, label, made}
+  // anything that came due while Spikey was closed: don't ring a pile of stale alarms, just say what was missed
+  const missed = items.filter(i => i.at < Date.now() - 10 * 60000);
+  if (missed.length){
+    items = items.filter(i => !missed.includes(i)); try{ localStorage.setItem(LS + 'items', JSON.stringify(items)); }catch{}
+    const what = missed.filter(i => i.kind !== 'timer').map(i => (i.kind === 'alarm' ? 'an alarm' : 'a reminder to ' + (i.label || 'something')) + ' at ' + new Date(i.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'}));
+    if (what.length) setTimeout(() => {
+      const go = () => { if (window.JV && (window.JV.speaking || window.JV.mode === 'thinking')) return setTimeout(go, 3000); window.JV_say && window.JV_say('While I was offline you missed ' + what.join(', ') + '.'); };
+      go();
+    }, 45000);
+  }
   const saveItems = () => { put('items', items); drawChip(); };
   function add(kind, at, label){
     const it = {id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), kind, at, label: label || '', made: Date.now()};
