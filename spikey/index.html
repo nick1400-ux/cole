@@ -3406,6 +3406,12 @@ HTML>>>`;
     ['capabilities screen', async () => { await cmd('what can you do'); const s = ($('capPanel') || {}).style; const ok = s && s.display === 'block'; await cmd('close it'); return [ok, 'shown=' + ok]; }],
     ['focus mode on/off', async () => { await cmd('focus mode'); const on = window.JV_assist.focused(); await cmd('focus off'); return [on && !window.JV_assist.focused(), 'on=' + on]; }],
     ['spotify: where is music', async () => { if (!(window.JV_spotify && window.JV_spotify.connected())) return [false, 'Spotify not connected']; const r = await cmd("where's the music playing", 20000); return [/spotify is/i.test(r), r]; }],
+    ['spotify: music on this laptop', async () => {
+      if (!(window.JV_spotify && window.JV_spotify.connected())) return [false, 'Spotify not connected'];
+      let w = await window.JV_spotify.where();
+      if (!new RegExp('on ' + window.JV_spotify.home() + '\\b', 'i').test(w)){ await cmd("I can't hear the music", 30000); await wait(2500); w = await window.JV_spotify.where(); }
+      return [new RegExp('on ' + window.JV_spotify.home() + '\\b', 'i').test(w) || /not playing/i.test(w), w];
+    }],
     ['brain answers (Claude)', async () => { const r = await cmd('quick math, what is 12 times 12', 30000); return [/144|one hundred forty.?four/i.test(r), r]; }],
     ['economic news (Claude + web)', async () => { const r = await cmd('any economic news today', 60000); return [/news|calendar|event|cpi|fomc|claims/i.test(r), r]; }],
     ['learned memory', async () => { const r = await cmd('what have you learned'); return [/learned|nothing yet/i.test(r), r]; }],
