@@ -1118,7 +1118,18 @@ document.addEventListener("keydown",e=>{
   else if(e.key==="r"||e.key==="R"){ui.back=tab;go("review");e.preventDefault()}
 });
 loadLocal(); loadPipe(); loadHabits(); loadLinks(); loadRules(); render();
-setInterval(()=>{ if(lossLeft()>0 || laptopLeft()>0 || keyOf(new Date())!==TODAY || new Date().getSeconds()===0) { if(!document.activeElement||!["INPUT","TEXTAREA"].includes(document.activeElement.tagName)) render() } },1000);
+// don't redraw the screen in the middle of a tap (phones drop the tap if the button is replaced under your finger)
+let lastTouch=0;["pointerdown","touchstart"].forEach(ev=>document.addEventListener(ev,()=>{lastTouch=Date.now()},{passive:true,capture:true}));
+setInterval(()=>{ if(Date.now()-lastTouch<1500) return; if(lossLeft()>0 || laptopLeft()>0 || keyOf(new Date())!==TODAY || new Date().getSeconds()===0) { if(!document.activeElement||!["INPUT","TEXTAREA"].includes(document.activeElement.tagName)) render() } },1000);
+// ---- self-update: when a new Cole is published, load it (phones keep old copies otherwise) ----
+const COLE_BUILD="2026-10-01-rules3";
+async function checkUpdate(){
+  if(location.protocol==="file:")return;
+  try{const r=await fetch(location.pathname+"?check="+Date.now(),{cache:"no-store"});const t=await r.text();const m=t.match(/const COLE_BUILD="([^"]+)"/);
+    if(m&&m[1]!==COLE_BUILD){const a=document.activeElement;if(ui.rulesDraft||(a&&["INPUT","TEXTAREA"].includes(a.tagName)))return;location.replace(location.pathname+"?v="+encodeURIComponent(m[1]))}}catch(e){}
+}
+setTimeout(checkUpdate,3000);setInterval(checkUpdate,5*60*1000);
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")checkUpdate()});
 const SB_URL="https://ntuzsyfzgfgxkmyqniqz.supabase.co", SB_KEY="sb_publishable_RxVn21A1NCVsMlCh03cvHw_vnBxCP2q";
 let sb=null, uid=null; const lastWrite={};
 function snap(path,row){return {id:path.split("/").pop(),exists:!!row,data:()=>row?row.data:undefined,metadata:{fromCache:false,hasPendingWrites:false}}}
