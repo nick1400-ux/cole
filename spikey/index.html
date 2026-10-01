@@ -967,7 +967,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
     {name:'open_website', description:'Open any web page in a new window.', input_schema:{type:'object', properties:{url:{type:'string'}}, required:['url']}},
     {name:'show_chart', description:'Show a big chart inside Spikey\'s own screen. Use names like NAS100, US30, SPX500, GOLD, BTC, OIL, DXY.', input_schema:{type:'object', properties:{symbol:{type:'string'}}, required:['symbol']}},
     {name:'show_slide', description:'Show one of Spikey\'s visual slides on the center screen: fuel (protein, calories, meals), trading (week P&L, discipline), money (accounts, food budget, spending), habits (gym, reel, family, slips) or agenda (to-dos).', input_schema:{type:'object', properties:{slide:{type:'string', enum:['fuel','trading','money','habits','agenda']}}, required:['slide']}},
-    {name:'backtest', description:'Nick\'s backtesting session: open the replay chart on its own screen, log a backtest trade, get stats, undo the last trade, or end the session. Use for anything about backtesting or replay.', input_schema:{type:'object', properties:{action:{type:'string', enum:['open','open_das','log','summary','undo','end']}, direction:{type:'string', enum:['long','short']}, outcome:{type:'string', enum:['win','loss','breakeven']}, r:{type:'number', description:'R multiple, e.g. 2 for a 2R win'}}, required:['action']}},
+    {name:'backtest', description:'Nick\'s backtesting session (he backtests on another screen; Spikey only keeps score): start the session, log a backtest trade, get stats, undo the last trade, or end the session. Use for anything about backtesting or replay.', input_schema:{type:'object', properties:{action:{type:'string', enum:['start','log','summary','undo','end']}, direction:{type:'string', enum:['long','short']}, outcome:{type:'string', enum:['win','loss','breakeven']}, r:{type:'number', description:'R multiple, e.g. 2 for a 2R win'}}, required:['action']}},
     {name:'add_task', description:'Add an objective to Spikey\'s on-screen list.', input_schema:{type:'object', properties:{text:{type:'string'}}, required:['text']}},
     {name:'complete_task', description:'Mark one of Spikey\'s objectives done, by its number (1 = first).', input_schema:{type:'object', properties:{number:{type:'integer'}}, required:['number']}},
     {name:'log_to_cole', description:'Save something Nick says into Cole (his life/trading app). Cole sorts it into trading journal, meals, ideas, to-dos and spending. Use when he says log, journal, note, tell Cole, or describes his trades, food, spending or plans for the record.', input_schema:{type:'object', properties:{text:{type:'string', description:'What Nick said, in his words'}}, required:['text']}},
@@ -997,8 +997,7 @@ Rules: trade mindset, emotions and trade recaps go in journal with tag "trading"
         case 'show_slide': return window.JV_slides && window.JV_slides.show(input.slide) ? 'Showing it.' : 'Slides are not available.';
         case 'backtest': {
           const B = window.JV_backtest; if (!B) return 'Backtest mode is not available.';
-          if (input.action === 'open') return B.open('tv').message;
-          if (input.action === 'open_das') return B.open('das').message;
+          if (input.action === 'start') return B.open().message;
           if (input.action === 'log') return B.logTrade({dir:input.direction, outcome:input.outcome || 'win', r:input.r});
           if (input.action === 'undo') return B.undo();
           if (input.action === 'end') return B.end();
@@ -1433,8 +1432,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     // --- backtesting ---
     if (window.JV_backtest){
       const B = window.JV_backtest;
-      if (/^(open|start|pull up|launch|bring up|begin)( my| the| a)? (backtest|backtesting|back test|back testing|replay)( screen| session| window)?$/.test(text)) return say(B.open('tv').message);
-      if (/^(open|start|pull up|launch)( my| the)? (das|dass|das replay|dast)( replay| screen)?$/.test(text)) return say(B.open('das').message);
+      if (/^(open|start|pull up|launch|bring up|begin)( my| the| a)? (backtest|backtesting|back test|back testing|replay)( screen| session| window)?$/.test(text)) return say(B.open().message);
       if (/^(end|stop|finish|close|wrap up)( my| the)? (backtest|backtesting|back test|back testing)( session)?$/.test(text)) return say(B.end());
       if (/^undo( the)?( last)? (backtest|back test)( trade)?$|^(scratch|delete) that( backtest)?$/.test(text) && B.active()) return say(B.undo());
       if (/^(how('?s| is)( my)? (backtest|back test|backtesting)( going)?|(backtest|back test) (stats|summary|status|score))$/.test(text)) return say(B.summary());
@@ -1701,29 +1699,12 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   const cfg = () => Object.assign({}, DEFAULTS, get('cfg', {}));
   const saveCfg = c => put('cfg', Object.assign(cfg(), c));
 
-  // ---------- the window ----------
-  let win = null;
-  function features(){
-    const s = cfg().screen;
-    if (!s) return 'popup,width=1400,height=900';
-    return `popup,left=${s.left},top=${s.top},width=${s.width},height=${s.height}`;
-  }
-  function openWindow(which = 'tv', startSession = true){
-    const c = cfg(), url = which === 'das' ? c.dasUrl : c.tvUrl;
-    if (!url) return {ok:false, message:'There is no link saved for that backtest tool yet. Add it in Setup, Backtesting.'};
-    const name = 'spikeyBacktest_' + which;
-    // reuse the window if it's already open, so a running replay never gets reloaded
-    if (win && !win.closed && win.name === name){ try{ win.focus(); }catch{} if (startSession && !session()) start(); return {ok:true, message:'Your backtest screen is already up.' + (startSession && session() ? ' Session is running.' : '')}; }
-    let w = window.open('', name, features());
-    if (!w) return {ok:false, message:'Chrome blocked the backtest window.'};
-    let fresh = false;
-    try{ fresh = w.location.href === 'about:blank'; }catch{ fresh = false; }   // cross-origin = already showing the chart
-    if (fresh) w.location.href = url;
-    const s = c.screen;
-    if (s){ try{ w.moveTo(s.left, s.top); w.resizeTo(s.width, s.height); }catch{} }
-    win = w;
-    const started = startSession && !session(); if (started) start();
-    return {ok:true, message: (fresh ? `Backtest screen is up${s ? ' on ' + s.label : ''}.` : 'Your backtest screen is already up.') + (started ? ' Session timer started.' : '')};
+  // ---------- start: no window, your backtest lives on your other screen; Spikey just monitors it ----------
+  function openWindow(){
+    const was = !!session();
+    if (!was) start();
+    if (window.JV_slides) window.JV_slides.show('backtest');
+    return {ok:true, message: was ? 'Your backtest session is already running. I am watching it.' : 'Backtest session started. Log your trades as you go and I will keep score on this screen.'};
   }
 
   // ---------- the session ----------
@@ -1830,7 +1811,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     const s = session(), st = stats(s);
     const hist = get('history', []).slice(-5).reverse();
     if (!s) return `<h2>BACKTEST <em>no session running</em></h2><div class="sgrid">
-      <div class="scard"><div class="k">Start</div><div class="big" style="font-size:28px;margin-top:10px">“Spikey, open backtesting”</div><p style="color:var(--mute);margin-top:10px;line-height:1.5">Opens your replay chart on its own screen and starts the session timer. Log each trade by voice: “backtest long win 2R”, “backtest short loss”, “undo backtest”.</p></div>
+      <div class="scard"><div class="k">Start</div><div class="big" style="font-size:28px;margin-top:10px">“Spikey, start backtesting”</div><p style="color:var(--mute);margin-top:10px;line-height:1.5">Starts the session timer and keeps this panel up while you backtest on your other screen. Log each trade by voice: “backtest long win 2R”, “backtest short loss”, “undo backtest”.</p></div>
       <div class="scard"><div class="k">Recent sessions</div><ul class="slist" style="margin-top:8px">${hist.length ? hist.map(h => { const x = stats(h); return `<li><span>${new Date(h.started).toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'})} · ${x.n} trades</span><span>${x.winRate}% · ${(x.totalR >= 0 ? '+' : '') + x.totalR.toFixed(1)}R</span></li>`; }).join('') : '<li class="none">No sessions yet</li>'}</ul></div></div>`;
     const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
     return `<h2>BACKTEST <em>${Math.floor(st.mins / 60) ? Math.floor(st.mins / 60) + 'h ' : ''}${Math.round(st.mins % 60)}m${st.mins >= 10 ? ' · ' + st.perHour.toFixed(1) + ' trades/hr' : ''}</em></h2>
@@ -1849,8 +1830,6 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
 
   window.JV_backtest = {open:openWindow, start, end, logTrade, undo, summary, stats, cfg, saveCfg, screens, active:() => !!session()};
 
-  // open on dock (Spikey only launches on dock), after the opening announcement gets going
-  if (cfg().openOnDock && !/[?&](sptest|debug|selftest)/.test(location.search)) setTimeout(() => openWindow('tv', false), 8000);   // just the chart; the session starts when you say so or log a trade
 })();
 
 </script>
@@ -1925,18 +1904,6 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
         <input id="setSp" autocomplete="off" placeholder="${sp && sp.hasClientId() ? 'client ID saved' : 'Spotify Client ID'}">
         <div class="btns"><button class="go" id="spGo">CONNECT SPOTIFY</button></div>`}
       </section>
-      ${(() => { const B = window.JV_backtest; if (!B) return ''; const c = B.cfg(); return `
-      <section>
-        <h4>4 · Backtesting <em class="${c.screen ? 'ok' : ''}">${c.screen ? 'ON ' + c.screen.label.toUpperCase() + ' ✓' : 'PICK A SCREEN'}</em></h4>
-        <p>Spikey opens your replay chart on its own screen when you dock, or when you say “Spikey, open backtesting”. Chrome may ask to “manage windows on all your displays”: click Allow.</p>
-        <div class="btns" id="btScreens"><button id="btDetect">DETECT SCREENS</button></div>
-        <p style="margin-top:10px">TradingView chart (use Bar Replay on it):</p>
-        <input id="btTv" autocomplete="off" value="${c.tvUrl.replace(/"/g,'&quot;')}">
-        <p>DAS replay link (optional):</p>
-        <input id="btDas" autocomplete="off" placeholder="paste the web address you use for DAS replay" value="${(c.dasUrl || '').replace(/"/g,'&quot;')}">
-        <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:4px 0 10px"><input type="checkbox" id="btDock" style="width:auto;margin:0" ${c.openOnDock ? 'checked' : ''}> Open the backtest chart every time I dock</label>
-        <div class="btns"><button class="go" id="btSave">SAVE</button><button id="btTest">OPEN IT NOW</button></div>
-      </section>`; })()}
       <section>
         <h4>3 · Cole <em class="${coleOn ? 'ok' : ''}">${coleOn ? 'SIGNED IN ✓' : 'NOT SIGNED IN'}</em></h4>
         <p>${coleOn ? 'Spikey reads your trades and to-dos, and “log to Cole …” saves into the right sections.' : 'Sign in with your Cole email and password.'}</p>
@@ -1950,18 +1917,7 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     if ($('spGo')) $('spGo').onclick = () => { const v = $('setSp').value.trim(); if (v) sp.setClientId(v); if (!sp.hasClientId()) return; sp.login(); };
     if ($('coleGoSetup')) $('coleGoSetup').onclick = () => { panel.classList.remove('show'); const s = $('coleState'); if (s) s.click(); };
     panel.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => e.stopPropagation()));
-    const B = window.JV_backtest;
-    if (B && $('btDetect')){
-      $('btDetect').onclick = async () => {
-        let list = null; try{ list = await B.screens(); }catch(e){}
-        if (!list){ $('btDetect').textContent = 'NOT ALLOWED — CLICK ALLOW IN CHROME'; return; }
-        const cur = B.cfg().screen;
-        $('btScreens').innerHTML = list.map((sc, i) => `<button data-sc="${i}" class="${cur && cur.left === sc.left && cur.top === sc.top ? 'go' : ''}">${sc.label.toUpperCase()} · ${sc.width}×${sc.height}${sc.current ? ' (SPIKEY)' : ''}</button>`).join('');
-        $('btScreens').querySelectorAll('[data-sc]').forEach(b => b.onclick = () => { B.saveCfg({screen:list[+b.dataset.sc]}); draw(); });
-      };
-      $('btSave').onclick = () => { B.saveCfg({tvUrl:$('btTv').value.trim() || B.cfg().tvUrl, dasUrl:$('btDas').value.trim(), openOnDock:$('btDock').checked}); draw(); };
-      $('btTest').onclick = () => { $('btSave').onclick(); B.open('tv', false); };
-    }   // typing here isn't push-to-talk
+   // typing here isn't push-to-talk
   }
   btn.onclick = () => { draw(); panel.classList.add('show'); };
   setTimeout(draw, 1500);
@@ -2136,7 +2092,9 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   function tick(){
     const JV = window.JV || {};
     // Spikey takes the stage whenever it's listening or talking
-    if (JV.speaking || JV.mode === 'listening' || JV.mode === 'thinking'){ if (idx !== 0) go(0); holdUntil = Date.now() + 6000; return; }
+    const bt = window.JV_backtest && window.JV_backtest.active();
+    if (!bt && (JV.speaking || JV.mode === 'listening' || JV.mode === 'thinking')){ if (idx !== 0) go(0); holdUntil = Date.now() + 6000; return; }
+    if (window.JV_backtest && window.JV_backtest.active()){ const b = SLIDES.findIndex(s => s.id === 'backtest'); if (idx !== b) go(b); return; }
     if (Date.now() < holdUntil) return;
     go(idx + 1);
   }
@@ -2152,7 +2110,8 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
   go(0);
   holdUntil = Date.now() + 25000;          // let the opening play first
   timer = setInterval(tick, DWELL);
-  setInterval(() => { const JV = window.JV || {}; if ((JV.speaking || JV.mode === 'listening') && idx !== 0){ go(0); holdUntil = Date.now() + 6000; } }, 400);
+  setInterval(() => { if (window.JV_backtest && window.JV_backtest.active() && Date.now() > holdUntil){ const b = SLIDES.findIndex(s => s.id === 'backtest'); if (idx !== b) go(b); } }, 2500);
+  setInterval(() => { const JV = window.JV || {}; if (window.JV_backtest && window.JV_backtest.active()) return; if ((JV.speaking || JV.mode === 'listening') && idx !== 0){ go(0); holdUntil = Date.now() + 6000; } }, 400);
 })();
 
 </script>
