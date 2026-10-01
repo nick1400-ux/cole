@@ -1573,7 +1573,7 @@ ${window.JV_learn ? window.JV_learn.prompt() + '\n' : ''}Right now it is ${now.t
 
   // ---------- mic diagnostics (?debug=1) ----------
   const DEBUG = new URLSearchParams(location.search).has('debug');
-  const SELFTEST = new URLSearchParams(location.search).has('selftest');
+  const SELFTEST = new URLSearchParams(location.search).has('mictest');   // old mic loop test (says 'what time is it' every 25s); only with ?mictest
   const D = JV.diag = {ev:{}, gum:'pending', track:'—', trackState:'—', devices:[], perm:'—', peak:0, lastText:'—', lastErr:'—', log:[]};
   const bump = (k, extra) => { D.ev[k] = (D.ev[k] || 0) + 1; D.log.push(new Date().toLocaleTimeString([], {hour12:false}) + ' ' + k + (extra ? ' ' + extra : '')); if (D.log.length > 14) D.log.shift(); };
   if (navigator.permissions) navigator.permissions.query({name:'microphone'}).then(p => { D.perm = p.state; p.onchange = () => D.perm = p.state; }).catch(() => D.perm = 'n/a');
