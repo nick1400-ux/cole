@@ -1369,7 +1369,8 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
 
   const IGNORED = {ignored:true};
   async function handle(raw, opts){
-    const clean = raw.replace(/(?<!\d)\.|\.(?!\d)|[,!?]/g,'').trim();   // keep decimals like 1.5
+    const clean = raw.replace(/\bback[- ]?test/gi,'backtest').replace(/(?<!\d)\.|\.(?!\d)|[,!?]/g,'').trim();   // keep decimals like 1.5
+    raw = raw.replace(/\bback[- ]?test/gi, 'backtest');
     const text = clean.toLowerCase();
     if (!text) return;
     if (!(opts && opts.followup)) set('reply', '');
@@ -1434,6 +1435,11 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     // --- backtesting ---
     if (window.JV_backtest){
       const B = window.JV_backtest;
+      // anything like "open a backtesting screen", "can you start backtesting", "pull up my backtest"
+      if (/\bbacktest/.test(text) && /\b(open|start|pull|bring|launch|begin|let'?s|lets|time to|fire up|load|up)\b/.test(text) && !/\b(end|stop|finish|close|minimi[sz]e|hide|undo|wrap|how|log|win|loss|long|short)\b/.test(text)){
+        if (B.active()){ B.show(true); return say('Backtest screen is up.'); }
+        return say(B.open().message);
+      }
       if (/^(let'?s |lets |time to )?(open|start|pull up|launch|bring up|begin|do)?( my| the| a| some)? ?(backtest|backtesting|back test|back testing|replay)( screen| session| window| mode)?$/.test(text) && !/^(backtest|back test)$/.test(text)) return say(B.open().message);
       if (/^(minimi[sz]e|hide|close)( the)? (backtest|backtesting|back test)( screen)?$/.test(text)){ B.hide(); return say('Minimized. The session is still running.'); }
       if (/^(show|bring back|open)( the| my)? (backtest|backtesting|back test)( screen| stats)?$/.test(text) && B.active()){ B.show(true); return; }
@@ -1680,6 +1686,25 @@ ${window.JV_backtest && window.JV_backtest.active() ? 'A backtesting session is 
     setTimeout(phrase, 16000); setInterval(phrase, 25000);
   }
 })();
+
+/* ===== auto-update: when a new Spikey is published, reload itself while idle ===== */
+(() => {
+  let base = null;
+  const sig = t => t.length + ':' + (t.match(/Spikey[^<]{0,0}/g) || []).length + ':' + t.slice(-400);
+  async function check(){
+    try{
+      const t = await (await fetch(location.pathname + '?v=' + Date.now(), {cache:'no-store'})).text();
+      const s = sig(t);
+      if (base === null){ base = s; return; }
+      if (s !== base){
+        const J = window.JV || {};
+        if (J.mode === 'idle' && !J.speaking && !J.awake && !document.querySelector('#setupPanel.show')) location.reload();
+      }
+    }catch{}
+  }
+  check(); setInterval(check, 90000);
+})();
+
 
 </script>
 <script>
