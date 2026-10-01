@@ -530,7 +530,26 @@ function vTrade(){
   <div class="stats" style="grid-template-columns:1fr 1fr">
     <div class="stat"><b style="color:var(--good)">${money(cleanPnl)}</b><small>on rule-perfect days</small></div>
     <div class="stat"><b style="color:var(--bad)">${money(dirtyPnl)}</b><small>on rule-broken days</small></div>
-  </div>`;
+  </div>${spikeyBacktestCard()}`;
+}
+// ---- shared with Spikey: backtest sessions Spikey logged, and what Spikey has learned ----
+let spikeyBt={}, spikeyLearned=null;
+function spikeyBacktestCard(){
+  const ss=Object.values(spikeyBt).filter(x=>x&&x.stats&&x.stats.n).sort((a,b)=>b.started-a.started);
+  if(!ss.length) return `<div class="eyebrow">Backtesting · from Spikey</div><div class="muted">Say “Spikey, let's start backtesting” and your sessions show up here.</div>`;
+  const n=ss.reduce((t,x)=>t+x.stats.n,0), w=ss.reduce((t,x)=>t+x.stats.wins,0), R=ss.reduce((t,x)=>t+x.stats.totalR,0);
+  const fR=v=>(v>0?"+":"")+(Math.round(v*100)/100)+"R";
+  return `<div class="eyebrow">Backtesting · from Spikey</div>
+  <div class="stats" style="grid-template-columns:1fr 1fr 1fr">
+    <div class="stat"><b>${n}</b><small>backtest trades</small></div>
+    <div class="stat"><b>${n?Math.round(100*w/n):0}%</b><small>win rate</small></div>
+    <div class="stat"><b style="color:${R>=0?"var(--good)":"var(--bad)"}">${fR(R)}</b><small>total R</small></div>
+  </div>
+  <div class="gap" style="margin-top:8px">${ss.slice(0,6).map(x=>`<div class="entry"><div class="when">${new Date(x.started).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})} · ${x.stats.mins||0} min</div>${x.stats.n} trades · ${x.stats.winRate}% wins · ${fR(x.stats.totalR)}${x.stats.pf?` · PF ${x.stats.pf===Infinity?"∞":(+x.stats.pf).toFixed(2)}`:""}</div>`).join("")}</div>`;
+}
+function spikeyLearnedCard(){
+  const L=spikeyLearned; if(!L||(!(L.rules||[]).length&&!(L.shortcuts||[]).length)) return "";
+  return `<div class="eyebrow">What Spikey has learned</div><div class="gap">${(L.rules||[]).map(r=>`<div class="entry">${esc(r.text)}</div>`).join("")}${(L.shortcuts||[]).map(c=>`<div class="entry"><div class="when">Voice shortcut</div>“${esc(c.phrase)}” → ${esc(c.command)}</div>`).join("")}</div>`;
 }
 
 function vFuel(){
@@ -760,7 +779,7 @@ function vMind(){
   <div class="eyebrow">Ideas vault (${allIdeas.length})</div>
   ${allIdeas.length?`<div class="gap">${allIdeas.map(x=>`<div class="entry"><div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><div><div class="when">${x.k}${x.area?" · "+esc(x.area):""}</div>${esc(x.text)}</div>${x.piped?`<span class="pill good">in pipeline</span>`:`<button class="btn ghost sm" data-topipe="${x.k}:${x.i}">→ Reel</button>`}</div></div>`).join("")}</div>`:`<div class="muted">Reel concepts, event themes, business moves: they collect here.</div>`}
   <div class="eyebrow">Journal</div>
-  ${recent.length?`<div class="gap">${recent.map(j=>`<div class="entry"><div class="when">${j.k} · ${SECTORS[j.tag]||"Journal"}</div>${esc(j.text)}</div>`).join("")}</div>`:`<div class="muted">Your entries show up here, newest first.</div>`}`;
+  ${recent.length?`<div class="gap">${recent.map(j=>`<div class="entry"><div class="when">${j.k} · ${SECTORS[j.tag]||"Journal"}</div>${esc(j.text)}</div>`).join("")}</div>`:`<div class="muted">Your entries show up here, newest first.</div>`}${spikeyLearnedCard()}`;
 }
 function aiErr(e,fallback){const c=e&&e.code;
   return c==="bad_key"?"Your Claude key didn't work. Check it in the box below.":c==="not_granted"?"Add your Claude key below so Cole can sort.":c==="rate_limited"?"Claude is busy. Give it a minute and try again.":c==="offline"?"No internet right now. Try again when you're back online.":fallback}
@@ -978,6 +997,8 @@ async function afterLogin(user){
   db.doc("meta/links").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.list)){links=x;try{localStorage.setItem("cole.links",JSON.stringify(links))}catch(e){}render()}}else saveLinks()},()=>{});
   db.doc("meta/habits").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.list)){habits=x;try{localStorage.setItem("cole.habits",JSON.stringify(habits))}catch(e){}const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()}}else saveHabits()},()=>{});
   db.doc("meta/pipeline").onSnapshot(s=>{if(s.exists){const x=JSON.parse(JSON.stringify(s.data()));if(Array.isArray(x.reels)){pipe=x;try{localStorage.setItem("cole.pipe",JSON.stringify(pipe))}catch(e){}const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()}}},()=>{});
+  db.collection("backtest").onSnapshot(sn=>{sn.docs.forEach(x=>{if(x.exists)spikeyBt[x.id]=JSON.parse(JSON.stringify(x.data()))});const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()},()=>{});
+  db.doc("spikey/learned").onSnapshot(x=>{if(x.exists){spikeyLearned=JSON.parse(JSON.stringify(x.data()));const a=document.activeElement;if(!a||!["INPUT","TEXTAREA"].includes(a.tagName))render()}},()=>{});
   db.collection("days").onSnapshot(snap=>{
     snap.docs.forEach(s=>{if(s.exists) days[s.id]=Object.assign(blankDay(),JSON.parse(JSON.stringify(s.data())))});
     saveLocal();
