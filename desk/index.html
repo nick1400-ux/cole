@@ -94,7 +94,7 @@ td.n,th.n{text-align:right;font-family:var(--f-mono);white-space:nowrap}
 .tl .row{padding:7px 0}
 .tl .t{font:500 12px var(--f-mono);color:var(--dim);width:70px;flex:none}
 .tl .now{color:var(--red)}
-.search{background:var(--slab2);border:1px solid var(--line);border-radius:9px;padding:8px 12px;min-width:260px}
+.search{background:var(--slab2);border:1px solid var(--line);border-radius:9px;padding:8px 12px;min-width:380px}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:var(--slab2);color:var(--dim);border-radius:999px;padding:4px 11px;font-size:12.5px;font-weight:600}
 .chip[aria-pressed="true"]{color:var(--ink);border-color:var(--red)}
@@ -118,6 +118,29 @@ svg.ch rect.bar:hover{filter:brightness(1.25)}
 .legend{display:flex;gap:14px;font-size:12px;color:var(--dim);margin-top:8px}
 .legend span::before{content:"";display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle;background:var(--c)}
 .note{font-size:13px;color:var(--dim);margin-top:8px}
+.jgrid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:18px;align-items:start}
+.jside{position:sticky;top:16px;display:flex;flex-direction:column;gap:14px;max-height:calc(100vh - 32px);overflow:auto}
+.jday{background:var(--slab);border:1px solid var(--line);border-radius:14px;padding:18px 22px;margin-bottom:14px;scroll-margin-top:16px}
+.jhead{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding-bottom:12px;border-bottom:1px solid var(--grid);margin-bottom:6px}
+.jdate{font:700 17px/1.2 var(--f-display);letter-spacing:.01em}
+.jmeta{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.jres{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.jres b{font-size:20px}
+.jplan{font-size:14px;color:var(--dim);padding:10px 0 2px}
+.jplan .when{margin-right:6px}
+.jbroke{font-size:13px;color:var(--bad);padding-top:6px}
+.je{padding:12px 0 12px 14px;border-left:2px solid var(--line);margin:10px 0}
+.je p{margin:4px 0 0;font-size:16.5px;line-height:1.6;max-width:72ch;white-space:pre-wrap}
+.je.jt{border-left-color:var(--uv)}
+.je.flag{border-left-color:var(--warn);background:linear-gradient(90deg,#e9c46a10,transparent 60%)}
+mark{background:#e5484d55;color:var(--ink);border-radius:3px;padding:0 2px}
+.jjump{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.jj{display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:7px;text-decoration:none;color:var(--ink);font:500 12px var(--f-mono)}
+.jj:hover{background:var(--slab2)}
+.jj.empty{color:var(--mute)}
+.jj i{width:8px;height:8px;border-radius:50%;flex:none}
+.jj b{font-weight:500;margin-left:auto}
+@media (max-width:1180px){.jgrid{grid-template-columns:1fr}.jside{position:static;max-height:none}}
 @media (max-width:1180px){.g4,.g6{grid-template-columns:repeat(2,minmax(0,1fr))}.g3{grid-template-columns:repeat(2,minmax(0,1fr))}.span3{grid-column:span 2}.kan{grid-template-columns:repeat(3,minmax(0,1fr))}.week{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media (max-width:760px){.app{grid-template-columns:1fr}nav.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap}.side .grow,.side .sub,.side .foot{display:none}main{padding:18px 16px}.g2,.g3,.g4,.g6{grid-template-columns:1fr}.span2,.span3{grid-column:auto}.kan,.week{grid-template-columns:1fr 1fr}}
 </style>
@@ -138,7 +161,7 @@ svg.ch rect.bar:hover{filter:brightness(1.25)}
 <div id="tip"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
-const DESK_BUILD="2026-10-09-desk1";
+const DESK_BUILD="2026-10-09-desk2";
 const SB_URL="https://ntuzsyfzgfgxkmyqniqz.supabase.co", SB_KEY="sb_publishable_RxVn21A1NCVsMlCh03cvHw_vnBxCP2q";
 
 /* ---------- plan constants (mirrors Cole app/index.html) ---------- */
@@ -163,7 +186,7 @@ const DEFAULT_RULES={maxTrades:2,winStart:"09:30",winEnd:"10:30",cooldown:15,eva
 /* ---------- state ---------- */
 let sb=null, uid=null;
 const days={}; const bt={}; let meta={rules:null,habits:null,pipeline:null,links:null}; let learned=null, slides=null;
-let ui={range:30,mkt:"All",jTag:"all",q:"",unit:"R"};
+let ui={range:30,mkt:"All",jTag:"all",q:"",unit:"R",raw:false};
 const pad=n=>String(n).padStart(2,"0");
 const keyOf=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const now=()=>new Date(); const TODAY=()=>keyOf(now());
@@ -241,8 +264,8 @@ const rangeName=()=>ui.range?`last ${ui.range} days`:"all time";
 
 /* ---------- views ---------- */
 const VIEWS=[
-  ["overview","Overview","1"],["trading","Trading","2"],["backtests","Backtests","3"],["fuel","Fuel","4"],
-  ["habits","Habits","5"],["mind","Mind","6"],["content","Content","7"],["money","Money","8"],["day","Day & week","9"],["spikey","Spikey","0"]];
+  ["journal","Journal & mindset","1"],["overview","Overview","2"],["trading","Trading","3"],["backtests","Backtests","4"],["fuel","Fuel","5"],
+  ["habits","Habits","6"],["mind","To-dos & ideas","7"],["content","Content","8"],["money","Money","9"],["day","Day & week","0"],["spikey","Spikey",""]];
 
 function vOverview(){
   const t=TODAY(),d=day(t),m=macros(t),c=RC(),nT=d.trades.length;
@@ -252,7 +275,7 @@ function vOverview(){
   const dt=habItems.length?Math.round(100*habItems.filter(Boolean).length/habItems.length):null;
   const tDays=wk.filter(k=>day(k).trades.length),disc=tDays.length?Math.round(100*tDays.filter(k=>dayClean(day(k))).length/tDays.length):null;
   const open=Object.keys(days).sort().reverse().flatMap(k=>(days[k].tasks||[]).map(x=>({...x,k}))).filter(x=>!x.done);
-  const jr=Object.keys(days).sort().reverse().flatMap(k=>(days[k].journal||[]).filter(j=>!j.hidden).map(j=>({...j,k}))).sort((a,b)=>(b.at||0)-(a.at||0)).slice(0,6);
+  const jr=Object.keys(days).sort().reverse().flatMap(k=>(days[k].journal||[]).filter(j=>!j.hidden&&j.tag==="trading").map(j=>({...j,k}))).sort((a,b)=>(b.at||0)-(a.at||0)).slice(0,6);
   const ci=d.checkin;
   const dRow=wk.slice().reverse().map(k=>{const x=day(k),mm=macros(k),tr=x.trades||[],r=sum(tr,tR),sl=hab.reduce((s,h)=>s+slipsOn(k,h.id),0);
     return `<tr><td>${fDay(k)}</td><td class="n">${tr.length?`${tr.length} · <span class="${r<0?"bad":r>0?"good":""}">${fR(r)}</span>`:"—"}</td><td class="n">${tr.length?(dayClean(x)?`<span class="pill good">clean</span>`:`<span class="pill bad">broken</span>`):""}</td><td class="n">${mm.p?mm.p+" g":"—"}</td><td class="n">${mm.kcal?mm.kcal.toLocaleString():"—"}</td><td>${[x.gym&&"Gym",x.reel&&"Reel",x.family&&"Siblings"].filter(Boolean).map(s=>`<span class="pill">${s}</span>`).join(" ")||'<span class="dim">—</span>'}</td><td class="n ${sl?"bad":""}">${sl||"—"}</td></tr>`}).join("");
@@ -268,7 +291,7 @@ function vOverview(){
   <div class="grid g3" style="margin-top:14px;align-items:start">
     ${card("Today's check-in",ci?`<div class="list"><div class="row"><span>Sleep</span><b class="mono">${ci.sleep??"—"}/10</b></div><div class="row"><span>Mood</span><b class="mono ${ci.mood<=4?"bad":""}">${ci.mood??"—"}/10</b></div>${(ci.feel||[]).length?`<div class="row"><span>Feeling</span><span>${esc(ci.feel.join(", "))}</span></div>`:""}</div>${ci.plan?`<div class="note"><b style="color:var(--ink)">Plan:</b> ${esc(ci.plan)}</div>`:""}${ci.mood<=4?`<div class="note bad">Mood ${ci.mood}: no trade, or 1 micro max.</div>`:""}`:`<div class="empty">No check-in yet today.</div>`)}
     ${card("Open to-dos",open.length?`<div class="list">${open.slice(0,8).map(x=>`<div class="row"><span>${esc(x.text)}</span><span class="when">${x.k.slice(5)}</span></div>`).join("")}</div>${open.length>8?`<div class="note">+${open.length-8} more in Mind</div>`:""}`:`<div class="empty">Nothing open.</div>`,"",open.length+" open")}
-    ${card("Latest journal",jr.length?jr.map(j=>`<div class="entry"><div class="when">${fDay(j.k)} · ${esc(SECTORS[j.tag]||"Journal")}</div>${esc(j.text)}</div>`).join(""):`<div class="empty">No entries yet.</div>`)}
+    ${card("Latest trading mindset",jr.length?jr.map(j=>`<div class="entry"><div class="when">${fDay(j.k)} · ${esc(SECTORS[j.tag]||"Journal")}</div>${esc(j.text)}</div>`).join(""):`<div class="empty">No mindset entries yet.</div>`,"",'<a href="#journal" style="color:var(--red)">open journal ›</a>')}
   </div>
   <div class="grid" style="margin-top:14px">${card("The last 7 days",`<table><thead><tr><th>Day</th><th class="n">Trades · R</th><th class="n">Rules</th><th class="n">Protein</th><th class="n">Calories</th><th>Done</th><th class="n">Slips</th></tr></thead><tbody>${dRow}</tbody></table>`)}</div>`;
 }
@@ -415,27 +438,87 @@ function vHabits(){
   </div>`;
 }
 
+/* ---------- JOURNAL: the heart of the desk ---------- */
+const RED_FLAGS=/make it back|revenge|fomo|tilt|chas|forc|overtrad|oversiz|frustrat|angry|pissed|desperat|rushed|impuls|gambl/i;
+function hl(text){const s=esc(text);const q=ui.q.trim();if(!q)return s;const re=new RegExp("("+q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","ig");return s.replace(re,"<mark>$1</mark>")}
+function dayR(k){return sum(day(k).trades||[],tR)}
+function jEntries(k){
+  const d=day(k),out=[];
+  (d.journal||[]).forEach(j=>{if(j.hidden&&!ui.raw)return;out.push({kind:j.hidden?"raw":"j",tag:j.hidden?"raw":(j.tag||"journal"),text:j.text,at:j.at||0})});
+  (d.trades||[]).forEach(t=>{if(t.note)out.push({kind:"t",tag:"trades",text:t.note,at:t.at||0,t})});
+  return out.sort((a,b)=>(a.at||0)-(b.at||0));
+}
+function vJournal(){
+  const ks=rangeKeys().slice().reverse(),q=ui.q.trim().toLowerCase(),tag=ui.jTag;
+  const pass=e=>(tag==="all"||e.tag===tag)&&(!q||String(e.text).toLowerCase().includes(q));
+  const shown=ks.map(k=>({k,es:jEntries(k).filter(pass)})).filter(x=>x.es.length||(!q&&tag==="all"&&day(x.k).checkin));
+  const all=ks.flatMap(k=>jEntries(k));
+  const cnt=t=>all.filter(e=>t==="all"||e.tag===t).length;
+  const chips=[["all","Everything"],["trading","Trading mindset"],["trades","Trade notes"],["journal","Journal"],["family","Family"],["business","Business & content"],["fitness","Fitness"]].concat(ui.raw?[["raw","Raw voice notes"]]:[]);
+
+  // patterns
+  const cis=ks.filter(k=>day(k).checkin);
+  const feel={};cis.forEach(k=>(day(k).checkin.feel||[]).forEach(f=>{feel[f]=feel[f]||{n:0,td:0,r:0,clean:0};feel[f].n++;if(day(k).trades.length){feel[f].td++;feel[f].r+=dayR(k);if(dayClean(day(k)))feel[f].clean++}}));
+  const fl=Object.entries(feel).sort((a,b)=>b[1].n-a[1].n);
+  const bucket=(lab,test)=>{const b=cis.filter(k=>test(+day(k).checkin.mood)&&day(k).trades.length);return{lab,n:b.length,r:sum(b,dayR),clean:b.filter(k=>dayClean(day(k))).length}};
+  const mb=[bucket("Mood 1–4",m=>m<=4),bucket("Mood 5–6",m=>m>=5&&m<=6),bucket("Mood 7–10",m=>m>=7)];
+  const sbk=(lab,test)=>{const b=cis.filter(k=>num(day(k).checkin.sleep)!==null&&test(+day(k).checkin.sleep)&&day(k).trades.length);return{lab,n:b.length,r:sum(b,dayR),clean:b.filter(k=>dayClean(day(k))).length}};
+  const sb=[sbk("Sleep 1–5",s=>s<=5),sbk("Sleep 6–10",s=>s>=6)];
+  const flags=all.filter(e=>e.kind!=="raw"&&RED_FLAGS.test(e.text));
+  const flagDays=new Set(ks.filter(k=>jEntries(k).some(e=>e.kind!=="raw"&&RED_FLAGS.test(e.text))));
+  const flagR=sum([...flagDays].filter(k=>day(k).trades.length),dayR);
+  const bucketRows=a=>a.map(b=>`<tr><td>${b.lab}</td><td class="n">${b.n}</td><td class="n ${b.r<0?"bad":b.r>0?"good":""}">${b.n?fR(b.r/b.n):"—"}</td><td class="n">${b.n?Math.round(100*b.clean/b.n)+"%":"—"}</td></tr>`).join("");
+
+  const feed=shown.length?shown.map(({k,es})=>{
+    const d=day(k),ci=d.checkin,tr=d.trades||[],r=dayR(k),cl=tr.length?dayClean(d):null;
+    const broken=[...new Set(tr.flatMap(brokenOf))].map(ruleLabel);
+    return `<section class="jday" id="j-${k}">
+      <header class="jhead">
+        <div><div class="jdate">${new Date(k+"T12:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})}</div>
+          <div class="jmeta">${ci?`<span class="pill ${ci.mood<=4?"bad":ci.mood>=7?"good":""}">mood ${ci.mood??"—"}/10</span><span class="pill">sleep ${ci.sleep??"—"}/10</span>${(ci.feel||[]).map(f=>`<span class="pill ${/make it back|anxious|frustrat/i.test(f)?"warn":""}">${esc(f)}</span>`).join("")}${ci.noTrade?'<span class="pill">sat out</span>':""}`:'<span class="dim" style="font-size:13px">no check-in</span>'}</div></div>
+        <div class="jres">${tr.length?`<b class="mono ${r<0?"bad":r>0?"good":""}">${fR(r)}</b><span class="pill ${cl?"good":"bad"}">${tr.length} trade${tr.length>1?"s":""} · ${cl?"clean":"broken"}</span>`:'<span class="dim mono" style="font-size:13px">no trades</span>'}</div>
+      </header>
+      ${ci&&ci.plan?`<div class="jplan"><span class="when">Plan</span> ${hl(ci.plan)}</div>`:""}
+      ${broken.length?`<div class="jbroke">Broke: ${broken.map(esc).join(" · ")}</div>`:""}
+      ${es.map(e=>`<article class="je ${e.kind==="t"?"jt":""} ${RED_FLAGS.test(e.text)&&e.kind!=="raw"?"flag":""}">
+        <div class="when">${e.at?fTime(e.at)+" · ":""}${e.kind==="t"?`Trade · ${esc(e.t.dir||"?")} ${e.t.qty||1} ${esc(e.t.contract||"")}${tR(e.t)!==null?" · "+fR(tR(e.t)):""}${tradeClean(e.t)?"":' · <span class="bad">rule broken</span>'}`:e.kind==="raw"?"Raw voice note":esc(SECTORS[e.tag]||"Journal")}</div>
+        <p>${hl(e.text)}</p></article>`).join("")}
+    </section>`}).join(""):`<div class="card"><div class="empty">${q?"Nothing matches “"+esc(ui.q)+"”.":"No entries in this range. Brain-dump to Cole or Spikey and they land here."}</div></div>`;
+
+  const jump=ks.slice(0,ui.range||ks.length).map(k=>{const ci=day(k).checkin,has=jEntries(k).length,tr=day(k).trades||[];
+    return `<a href="#journal" data-jump="${k}" class="jj ${has?"":"empty"}" data-tip="${fDay(k)}${ci?" · mood "+ci.mood:""}${tr.length?" · "+fR(dayR(k)):""} · ${has} entr${has===1?"y":"ies"}"><span>${k.slice(5)}</span><i style="background:${!ci?"var(--slab2)":ci.mood<=4?"var(--bad)":ci.mood>=7?"var(--good)":"var(--warn)"}"></i><b class="${tr.length?(dayR(k)<0?"bad":"good"):"dim"}">${tr.length?fR(dayR(k)):""}</b></a>`}).join("");
+
+  return `
+  <div class="top" style="margin-top:-6px">
+    <input class="search" id="q" placeholder="Search your journal, plans and trade notes…" value="${esc(ui.q)}">
+    <div class="chips">${chips.map(([t,l])=>`<button class="chip" data-jtag="${t}" aria-pressed="${tag===t}">${esc(l)} <span class="dim">${cnt(t)}</span></button>`).join("")}
+      <button class="chip" data-act="raw" aria-pressed="${ui.raw}">${ui.raw?"Hide":"Show"} raw voice notes</button></div>
+  </div>
+  <div class="jgrid">
+    <div class="jfeed">${feed}</div>
+    <aside class="jside">
+      ${card("Mindset at a glance",`<div class="grid g2" style="gap:10px">
+        <div class="kpi"><b>${all.filter(e=>e.tag==="trading").length}</b><small>trading-mindset entries</small></div>
+        <div class="kpi"><b>${cis.length}</b><small>check-ins · ${rangeName()}</small></div>
+        <div class="kpi"><b class="${flags.length?"warn":""}">${flags.length}</b><small>red-flag entries</small></div>
+        <div class="kpi"><b class="${flagR<0?"bad":flagR>0?"good":""}">${flagDays.size?fR(flagR):"—"}</b><small>R on red-flag days</small></div></div>
+        <div class="note">Red flags: “make it back”, revenge, FOMO, tilt, chasing, forcing, rushed, frustrated…</div>`)}
+      ${card("How you felt → how you traded",fl.length?`<table><thead><tr><th>Feeling</th><th class="n">Days</th><th class="n">R/day</th><th class="n">Clean</th></tr></thead><tbody>${fl.map(([f,x])=>`<tr><td>${esc(f)}</td><td class="n">${x.n}</td><td class="n ${x.r<0?"bad":x.r>0?"good":""}">${x.td?fR(x.r/x.td):"—"}</td><td class="n">${x.td?Math.round(100*x.clean/x.td)+"%":"—"}</td></tr>`).join("")}</tbody></table><div class="note">R per trading day and % rule-clean, on days you checked in with that feeling.</div>`:`<div class="empty">Check in before the bell to see this.</div>`)}
+      ${card("Mood & sleep → results",`<table><thead><tr><th>Morning</th><th class="n">Days</th><th class="n">R/day</th><th class="n">Clean</th></tr></thead><tbody>${bucketRows(mb)}${bucketRows(sb)}</tbody></table>`)}
+      ${card("Jump to a day",`<div class="jjump">${jump}</div><div class="legend"><span style="--c:var(--good)">mood 7+</span><span style="--c:var(--warn)">5–6</span><span style="--c:var(--bad)">1–4</span></div>`)}
+    </aside>
+  </div>`;
+}
+
 function vMind(){
   const ks=Object.keys(days).sort().reverse();
   const tasks=ks.flatMap(k=>(days[k].tasks||[]).map(x=>({...x,k})));
   const open=tasks.filter(x=>!x.done),done=tasks.filter(x=>x.done);
   const ideas=ks.flatMap(k=>(days[k].ideas||[]).map(x=>({...x,k})));
-  const q=ui.q.trim().toLowerCase();
-  let jr=ks.flatMap(k=>(days[k].journal||[]).filter(j=>!j.hidden).map(j=>({...j,k}))).sort((a,b)=>(b.at||0)-(a.at||0)||(b.k>a.k?1:-1));
-  const counts={};jr.forEach(j=>counts[j.tag||"journal"]=(counts[j.tag||"journal"]||0)+1);
-  if(ui.jTag!=="all")jr=jr.filter(j=>(j.tag||"journal")===ui.jTag);
-  if(q)jr=jr.filter(j=>String(j.text).toLowerCase().includes(q));
-  const ideasF=q?ideas.filter(x=>String(x.text).toLowerCase().includes(q)):ideas;
-  return `
-  <div class="top" style="margin-top:-6px"><input class="search" id="q" placeholder="Search journal and ideas…" value="${esc(ui.q)}">
-    <div class="chips">${[["all","All ("+Object.values(counts).reduce((a,b)=>a+b,0)+")"],...Object.keys(SECTORS).map(t=>[t,SECTORS[t]+" ("+(counts[t]||0)+")"])].map(([t,l])=>`<button class="chip" data-jtag="${t}" aria-pressed="${ui.jTag===t}">${esc(l)}</button>`).join("")}</div></div>
-  <div class="grid g3">
-    ${card("Journal",jr.length?`<div class="scroll" style="max-height:640px">${jr.map(j=>`<div class="entry"><div class="when">${fDay(j.k)}${j.at?" · "+fTime(j.at):""} · ${esc(SECTORS[j.tag]||"Journal")}</div>${esc(j.text)}</div>`).join("")}</div>`:`<div class="empty">No entries match.</div>`,"span2",`${jr.length} entries`)}
-    <div class="grid" style="align-content:start">
-      ${card("To-do",open.length?`<div class="list">${open.map(x=>`<div class="row"><span>${esc(x.text)}</span><span class="when">${x.k.slice(5)}</span></div>`).join("")}</div>`:`<div class="empty">Nothing open.</div>`,"",`${open.length} open · ${done.length} done`)}
-      ${card("Ideas vault",ideasF.length?`<div class="scroll" style="max-height:380px">${ideasF.map(x=>`<div class="entry"><div class="when">${fDay(x.k)}${x.area?" · "+esc(x.area):""}${x.piped?' · <span class="good">in pipeline</span>':""}</div>${esc(x.text)}</div>`).join("")}</div>`:`<div class="empty">No ideas yet.</div>`,"",ideasF.length+"")}
-      ${done.length?card("Done lately",`<div class="list">${done.slice(0,8).map(x=>`<div class="row"><span class="dim" style="text-decoration:line-through">${esc(x.text)}</span><span class="when">${x.k.slice(5)}</span></div>`).join("")}</div>`):""}
-    </div>
+  return `<div class="grid g3">
+    ${card("To-do",open.length?`<div class="list">${open.map(x=>`<div class="row"><span>${esc(x.text)}</span><span class="when">${x.k.slice(5)}</span></div>`).join("")}</div>`:`<div class="empty">Nothing open.</div>`,"",`${open.length} open`)}
+    ${card("Ideas vault",ideas.length?`<div class="scroll" style="max-height:640px">${ideas.map(x=>`<div class="entry"><div class="when">${fDay(x.k)}${x.area?" · "+esc(x.area):""}${x.piped?' · <span class="good">in pipeline</span>':""}</div>${esc(x.text)}</div>`).join("")}</div>`:`<div class="empty">No ideas yet.</div>`,"",ideas.length+"")}
+    ${card("Done",done.length?`<div class="list">${done.slice(0,20).map(x=>`<div class="row"><span class="dim" style="text-decoration:line-through">${esc(x.text)}</span><span class="when">${x.k.slice(5)}</span></div>`).join("")}</div>`:`<div class="empty">Nothing checked off yet.</div>`,"",done.length+"")}
   </div>`;
 }
 
@@ -511,9 +594,9 @@ function vSpikey(){
 }
 
 /* ---------- shell ---------- */
-const RENDER={overview:vOverview,trading:vTrading,backtests:vBacktests,fuel:vFuel,habits:vHabits,mind:vMind,content:vContent,money:vMoney,day:vDay,spikey:vSpikey};
-const RANGED=["trading","fuel","habits","money"];
-function current(){const h=location.hash.slice(1);return RENDER[h]?h:"overview"}
+const RENDER={journal:vJournal,overview:vOverview,trading:vTrading,backtests:vBacktests,fuel:vFuel,habits:vHabits,mind:vMind,content:vContent,money:vMoney,day:vDay,spikey:vSpikey};
+const RANGED=["journal","trading","fuel","habits","money"];
+function current(){const h=location.hash.slice(1);return RENDER[h]?h:"journal"}
 let syncText="";
 function renderNav(){
   const cur=current();
@@ -536,10 +619,12 @@ document.addEventListener("click",e=>{
   const s=e.target.closest("[data-seg] button");if(s){const k=s.parentElement.dataset.seg;ui[k]=k==="range"?+s.dataset.v:s.dataset.v;return render()}
   const m=e.target.closest("[data-mkt]");if(m){ui.mkt=m.dataset.mkt;return render()}
   const j=e.target.closest("[data-jtag]");if(j){ui.jTag=j.dataset.jtag;return render()}
+  const rw=e.target.closest("[data-act='raw']");if(rw){ui.raw=!ui.raw;if(!ui.raw&&ui.jTag==="raw")ui.jTag="all";return render()}
+  const jm=e.target.closest("[data-jump]");if(jm){e.preventDefault();const el=document.getElementById("j-"+jm.dataset.jump);if(el)el.scrollIntoView({behavior:"smooth",block:"start"});return}
   const o=e.target.closest("[data-act='out']");if(o){sb.auth.signOut().then(()=>location.reload())}
 });
 document.addEventListener("input",e=>{if(e.target.id==="q"){ui.q=e.target.value;render()}});
-document.addEventListener("keydown",e=>{if(["INPUT","TEXTAREA"].includes((document.activeElement||{}).tagName)||e.metaKey||e.ctrlKey||e.altKey)return;const v=VIEWS.find(x=>x[2]===e.key);if(v)location.hash=v[0]});
+document.addEventListener("keydown",e=>{if(["INPUT","TEXTAREA"].includes((document.activeElement||{}).tagName)||e.metaKey||e.ctrlKey||e.altKey)return;const v=VIEWS.find(x=>x[2]&&x[2]===e.key);if(v)location.hash=v[0]});
 
 /* ---------- data ---------- */
 function ingest(path,data){
