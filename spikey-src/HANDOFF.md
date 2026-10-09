@@ -1,5 +1,8 @@
 # Spikey — handoff (saved 2026-10-01 00:15 ET)
 
+Full handoff doc (2026-10-09): https://claude.ai/code/artifact/61f8fb92-43b8-48d7-8606-9de10754a2f3
+
+
 Live app: https://nick1400-ux.github.io/cole/spikey/ (built file: `spikey/index.html`).
 Cole app: `Cole app/index.html` (also copied to Nick's Desktop\Cole app).
 
