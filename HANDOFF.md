@@ -10,6 +10,7 @@ Spikey is Nick's voice-assistant HUD for his Windows laptop: it opens on the lap
 | --- | --- | --- |
 | Spikey (live) | https://nick1400-ux.github.io/cole/spikey/ | Built file `spikey/index.html`, repo `nick1400-ux/cole`, branch `main` |
 | Spikey source | `spikey-src/` | `src/*.js`, `buildspikey3.py`, `tests/`, `device/spikey-watch.txt`, `HANDOFF.md` |
+| Cole Desk (desktop dashboard) | https://nick1400-ux.github.io/cole/desk/ | `desk/index.html` + `desk/manifest.json`; read-only view of every `cole_docs` path, same Cole login; installable as a desktop app |
 | Cole app | `Cole app/index.html` (also Desktop\Cole app on the laptop) | Same GitHub Pages site |
 | Laptop watcher | `Documents\Spikey\spikey-watch.txt` | Windows scheduled task "Spikey" (logon + every 5 min) |
 | Laptop logs | `Documents\DockWatch\` | `dock-log.csv`, `heartbeat.txt`, `diag.txt`, `errors.txt` |
@@ -17,6 +18,9 @@ Spikey is Nick's voice-assistant HUD for his Windows laptop: it opens on the lap
 | Keys | Spikey's own Chrome profile (`%LOCALAPPDATA%\SpikeyMainChrome`) | Claude key, Spotify client ID + login, Cole sign-in; set in ⚙ SETUP. Never put keys in the repo |
 
 Look: "Night Ops Red Room" (black, red lead, UV-purple accents), Sledge B logo spinning in 3D at the centre. Laptop screen only; the two monitors stay free.
+
+## Cole Desk
+A wide-screen, read-only dashboard Nick opens on purpose (pinned to the Windows taskbar), separate from Spikey's dock HUD. Sections: Overview, Trading (equity curve in R or $, by day/weekday/market, rules broken, every trade, check-ins, trading costs), Backtests, Fuel, Habits (heatmaps, triggers, slip hours), Mind (searchable journal, to-dos, ideas), Content (pipeline board), Money (logged spend), Day & week, Spikey (learned rules, shortcuts, slides). Live via Supabase realtime; reloads itself when `DESK_BUILD` changes. Logging still happens in Cole or Spikey. If Cole's plan constants (targets, PLAN) change, mirror them at the top of `desk/index.html`.
 
 ## How it opens
 1. The watcher checks monitors every 3 s; on dock it opens Chrome in app mode, full screen on the laptop screen, at the live URL. It restarts itself when its file changes. (Smart App Control blocks .bat/.ps1, so it's a text file run with `Invoke-Expression`.)
